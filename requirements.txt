@@ -1,0 +1,6 @@
+flask
+pandas
+plotly
+pyqt5
+pyqtgraph
+pytz
