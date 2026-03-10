@@ -1,0 +1,19 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.cursor
+agent-transcripts
+node_modules
+dist
+build
+*.log
+
+# Large runtime data; mount at runtime instead
+sa
+sos
