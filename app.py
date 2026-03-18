@@ -10,6 +10,7 @@ from memory_module import get_memory_data
 from disk_module import get_disk_data
 from network_module import get_network_data
 from network_edev_module import get_network_edev_data
+from total_process_count import get_total_process_count_data
 from sar_parser import get_hostname
 
 import plotly.express as px
@@ -253,7 +254,7 @@ def parse_sos_report_entries(report_path):
     return entries
 
 
-GRAPH_OPTIONS = ["cpu", "memory", "disk", "network", "network_edev"]
+GRAPH_OPTIONS = ["cpu", "memory", "disk", "network", "network_edev", "total_process_count"]
 
 
 def _add_cpu_dropdown(fig, cpu_list):
@@ -294,6 +295,7 @@ def index():
     disk_graph = None
     net_graph = None
     net_err_graph = None
+    process_graph = None
     error_message = None
     hostname = ""
     cpu_list = []
@@ -341,6 +343,7 @@ def index():
                 disk_graph=disk_graph,
                 net_graph=net_graph,
                 net_err_graph=net_err_graph,
+                process_graph=process_graph,
                 sa_files=sa_files,
                 error_message=error_message,
                 hostname=hostname,
@@ -536,11 +539,11 @@ def index():
                     mem_name_map = {"kbmemused": "Used", "kbmemfree": "Free"}
                     for t in mem_fig.data:
                         t.name = mem_name_map.get(str(t.name), t.name)
-                        t.hovertemplate = f"<b>{t.name}</b><br>Time: %{{x}}<br>Value: %{{y:,.0f}} MB<extra></extra>"
+                        t.hovertemplate = f"<b>{t.name}</b><br>Time: %{{x}}<br>Value: %{{y:.2f}}%<extra></extra>"
                     mem_fig.update_layout(
                         yaxis=dict(
-                            title="Memory (MB)",
-                            tickformat=",d",
+                            title="Memory (%)",
+                            ticksuffix="%",
                         ),
                         legend=dict(title="Metric"),
                     )
@@ -718,6 +721,36 @@ def index():
                     except Exception:
                         pass
 
+                if "total_process_count" in selected_graphs:
+                    try:
+                        proc = get_total_process_count_data(path, "UTC", tz)
+                        if not proc.empty:
+                            proc_fig = px.line(
+                                proc,
+                                x="time",
+                                y=["runq_sz", "plist_sz", "ldavg_1", "ldavg_5", "ldavg_15", "blocked"],
+                                title="Process Queue and Load (sar -q)",
+                            )
+                            name_map = {
+                                "runq_sz": "runq-sz",
+                                "plist_sz": "plist-sz",
+                                "ldavg_1": "ldavg-1",
+                                "ldavg_5": "ldavg-5",
+                                "ldavg_15": "ldavg-15",
+                                "blocked": "blocked",
+                            }
+                            for t in proc_fig.data:
+                                t.name = name_map.get(str(t.name), t.name)
+                                t.hovertemplate = f"<b>{t.name}</b><br>Time: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>"
+                            proc_fig.update_layout(
+                                xaxis_title="Time",
+                                yaxis_title="Value",
+                                legend=dict(title="Metric"),
+                            )
+                            process_graph = proc_fig.to_html(full_html=False)
+                    except Exception:
+                        pass
+
             except Exception as e:
                 error_message = str(e)
         else:
@@ -742,6 +775,7 @@ def index():
         disk_graph=disk_graph,
         net_graph=net_graph,
         net_err_graph=net_err_graph,
+        process_graph=process_graph,
         sa_files=sa_files,
         error_message=error_message,
         hostname=hostname,

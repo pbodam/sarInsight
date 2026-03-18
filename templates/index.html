@@ -484,7 +484,7 @@ if (document.getElementById('iface_select')) {
 }
 </script>
 
-{% if (active_tab or 'sar') == 'sar' and (cpu_graph or mem_graph or disk_graph or net_graph or net_err_graph) %}
+{% if (active_tab or 'sar') == 'sar' and (cpu_graph or mem_graph or disk_graph or net_graph or net_err_graph or process_graph) %}
 <hr style="border-color: rgba(255,255,255,0.1); margin: 2rem 0;">
 
 {% if cpu_graph %}
@@ -519,6 +519,13 @@ if (document.getElementById('iface_select')) {
 <div class="graph-section">
     <h3>Network Errors (sar -n EDEV)</h3>
     <div class="graph-wrapper">{{ net_err_graph|safe }}</div>
+</div>
+{% endif %}
+
+{% if process_graph %}
+<div class="graph-section">
+    <h3>Process Queue / Total Processes (sar -q)</h3>
+    <div class="graph-wrapper">{{ process_graph|safe }}</div>
 </div>
 {% endif %}
 
