@@ -90,42 +90,6 @@
         }
         .cpu-metrics-grid .header, .network-metrics-grid .header, .disk-metrics-grid .header { font-weight: 600; color: var(--muted); }
         .cpu-metrics-grid .row-label, .network-metrics-grid .row-label, .disk-metrics-grid .row-label { font-weight: 500; }
-        .tab-bar { display: flex; gap: 0.75rem; margin-bottom: 1rem; }
-        .tab-btn {
-            padding: 0.6rem 1rem;
-            border: 1px solid rgba(255,255,255,0.2);
-            border-radius: 8px;
-            background: var(--surface);
-            color: var(--text);
-            cursor: pointer;
-        }
-        .tab-btn.active {
-            background: var(--accent);
-            color: var(--bg);
-            border-color: var(--accent);
-            font-weight: 600;
-        }
-        .kv-grid {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            gap: 0.5rem 1rem;
-        }
-        .kv-key { color: var(--muted); }
-        .sos-block { margin-top: 1rem; }
-        .sos-block h4 { margin: 0 0 0.5rem 0; color: var(--muted); font-weight: 600; }
-        .sos-pre {
-            background: var(--bg);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 8px;
-            padding: 0.75rem;
-            max-height: 280px;
-            overflow: auto;
-            white-space: pre-wrap;
-            word-break: break-word;
-            font-family: Consolas, "Courier New", monospace;
-            font-size: 0.85rem;
-            margin: 0;
-        }
     </style>
 </head>
 <body>
@@ -134,17 +98,11 @@
 <script type="application/json" id="saved_network_metrics">{{ (selected_network_metrics or [])|tojson }}</script>
 <script type="application/json" id="saved_disk_metrics">{{ (selected_disk_metrics or [])|tojson }}</script>
 <h2>sarInsight - SAR Analyzer</h2>
-<div class="tab-bar">
-    <button type="button" class="tab-btn {% if (active_tab or 'sar') == 'sar' %}active{% endif %}" id="tab-btn-sar">SAR Analyzer</button>
-    <button type="button" class="tab-btn {% if (active_tab or 'sar') == 'sos' %}active{% endif %}" id="tab-btn-sos">SOS Report</button>
-</div>
 {% if hostname %}
 <p class="hostname">Host: <strong>{{ hostname }}</strong></p>
 {% endif %}
 
-<div id="tab-sar" {% if (active_tab or 'sar') != 'sar' %}style="display:none;"{% endif %}>
 <form method="post">
-    <input type="hidden" name="tab" value="sar">
     <div class="card">
         <div class="form-grid">
             <div class="form-group">
@@ -230,74 +188,7 @@
         <button type="submit">Analyze</button>
     </div>
 </form>
-</div>
-<div id="tab-sos" {% if (active_tab or 'sar') != 'sos' %}style="display:none;"{% endif %}>
-    <form method="post">
-        <input type="hidden" name="tab" value="sos">
-        <div class="card">
-            <div class="form-grid">
-                <div class="form-group">
-                    <label>Select SOS report folder/archive from sos folder</label>
-                    <select name="selected_sos_file">
-                        <option value="">-- Choose sos item --</option>
-                        {% for f in sos_files %}
-                        <option value="{{ f }}" {% if selected_sos_file == f %}selected{% endif %}>{{ f }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-            </div>
-            {% if sos_error_message %}
-            <div class="error">{{ sos_error_message }}</div>
-            {% endif %}
-            <button type="submit">Read SOS Report</button>
-        </div>
-    </form>
-
-    {% if sos_summary %}
-    <div class="card">
-        <h3>SOS Report Summary</h3>
-        <div class="kv-grid">
-            <div class="kv-key">Hostname</div><div>{{ sos_summary.hostname or "-" }}</div>
-            <div class="kv-key">OS Release</div><div>{{ sos_summary.os_release or "-" }}</div>
-            <div class="kv-key">Kernel</div><div>{{ sos_summary.kernel or "-" }}</div>
-            <div class="kv-key">Uptime</div><div>{{ sos_summary.uptime or "-" }}</div>
-            <div class="kv-key">Report Date</div><div>{{ sos_summary.report_date or "-" }}</div>
-        </div>
-    </div>
-    {% endif %}
-    {% if sos_entries %}
-    <div class="card">
-        <h3>SOS Command Outputs</h3>
-        {% for item in sos_entries %}
-        <div class="sos-block">
-            <h4>{{ item.title }}</h4>
-            <pre class="sos-pre">{{ item.output }}</pre>
-        </div>
-        {% endfor %}
-    </div>
-    {% endif %}
-</div>
 <script>
-function showTab(tabName) {
-    var sar = document.getElementById('tab-sar');
-    var sos = document.getElementById('tab-sos');
-    var btnSar = document.getElementById('tab-btn-sar');
-    var btnSos = document.getElementById('tab-btn-sos');
-    if (tabName === 'sos') {
-        sar.style.display = 'none';
-        sos.style.display = 'block';
-        btnSar.classList.remove('active');
-        btnSos.classList.add('active');
-    } else {
-        sar.style.display = 'block';
-        sos.style.display = 'none';
-        btnSos.classList.remove('active');
-        btnSar.classList.add('active');
-    }
-}
-document.getElementById('tab-btn-sar')?.addEventListener('click', function() { showTab('sar'); });
-document.getElementById('tab-btn-sos')?.addEventListener('click', function() { showTab('sos'); });
-
 document.getElementById('select_all_graphs')?.addEventListener('change', function() {
     var checkboxes = document.querySelectorAll('input[name="graphs"]');
     checkboxes.forEach(function(cb) { cb.checked = this.checked; }, this);
@@ -484,7 +375,7 @@ if (document.getElementById('iface_select')) {
 }
 </script>
 
-{% if (active_tab or 'sar') == 'sar' and (cpu_graph or mem_graph or disk_graph or net_graph or net_err_graph or process_graph) %}
+{% if cpu_graph or mem_graph or disk_graph or net_graph or net_err_graph or socket_graph or process_graph %}
 <hr style="border-color: rgba(255,255,255,0.1); margin: 2rem 0;">
 
 {% if cpu_graph %}
@@ -519,6 +410,13 @@ if (document.getElementById('iface_select')) {
 <div class="graph-section">
     <h3>Network Errors (sar -n EDEV)</h3>
     <div class="graph-wrapper">{{ net_err_graph|safe }}</div>
+</div>
+{% endif %}
+
+{% if socket_graph %}
+<div class="graph-section">
+    <h3>Socket Usage (sar -n SOCK)</h3>
+    <div class="graph-wrapper">{{ socket_graph|safe }}</div>
 </div>
 {% endif %}
 

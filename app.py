@@ -1,7 +1,4 @@
 import os
-import re
-import tarfile
-import fnmatch
 import pandas as pd
 from flask import Flask, render_template, request
 
@@ -10,6 +7,7 @@ from memory_module import get_memory_data
 from disk_module import get_disk_data
 from network_module import get_network_data
 from network_edev_module import get_network_edev_data
+from socket_info import get_socket_info_data
 from total_process_count import get_total_process_count_data
 from sar_parser import get_hostname
 
@@ -18,19 +16,13 @@ import plotly.graph_objects as go
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SA_FOLDER = os.path.join(BASE_DIR, "sa")
-SOS_FOLDER = os.path.join(BASE_DIR, "sos")
 
 app = Flask(__name__)
 app.config["SA_FOLDER"] = SA_FOLDER
-app.config["SOS_FOLDER"] = SOS_FOLDER
 
 
 def _ensure_sa_folder():
     os.makedirs(SA_FOLDER, exist_ok=True)
-
-
-def _ensure_sos_folder():
-    os.makedirs(SOS_FOLDER, exist_ok=True)
 
 
 def _get_sa_files():
@@ -41,220 +33,7 @@ def _get_sa_files():
         return []
 
 
-def _get_sos_files():
-    _ensure_sos_folder()
-    try:
-        allowed_exts = (".tar", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2")
-        items = []
-        for f in os.listdir(SOS_FOLDER):
-            full = os.path.join(SOS_FOLDER, f)
-            if os.path.isdir(full):
-                items.append(f)
-            elif os.path.isfile(full) and f.lower().endswith(allowed_exts):
-                items.append(f)
-        return items
-    except OSError:
-        return []
-
-
-def _extract_from_tar(archive_path, candidate_suffixes):
-    try:
-        with tarfile.open(archive_path, "r:*") as tar:
-            for member in tar.getmembers():
-                if not member.isfile():
-                    continue
-                lower_name = member.name.lower()
-                if any(lower_name.endswith(sfx.lower()) for sfx in candidate_suffixes):
-                    extracted = tar.extractfile(member)
-                    if not extracted:
-                        continue
-                    return extracted.read().decode("utf-8", errors="ignore")
-    except Exception:
-        return ""
-    return ""
-
-
-def _extract_from_dir(report_dir, candidate_suffixes):
-    for suffix in candidate_suffixes:
-        rel = suffix.lstrip("/").replace("/", os.sep)
-        full = os.path.join(report_dir, rel)
-        if os.path.isfile(full):
-            try:
-                with open(full, "r", encoding="utf-8", errors="ignore") as fp:
-                    return fp.read()
-            except Exception:
-                continue
-    return ""
-
-
-def _path_matches(path_value, suffix_pattern):
-    norm_path = "/" + path_value.replace("\\", "/").lstrip("/")
-    norm_pattern = "/" + suffix_pattern.replace("\\", "/").lstrip("/")
-    if "*" in norm_pattern:
-        return fnmatch.fnmatch(norm_path.lower(), f"*{norm_pattern.lower()}")
-    return norm_path.lower().endswith(norm_pattern.lower())
-
-
-def _extract_many_from_tar(archive_path, candidate_suffixes):
-    found = []
-    try:
-        with tarfile.open(archive_path, "r:*") as tar:
-            for member in tar.getmembers():
-                if not member.isfile():
-                    continue
-                if not any(_path_matches(member.name, sfx) for sfx in candidate_suffixes):
-                    continue
-                extracted = tar.extractfile(member)
-                if not extracted:
-                    continue
-                text = extracted.read().decode("utf-8", errors="ignore")
-                found.append((member.name, text))
-    except Exception:
-        return []
-    return found
-
-
-def _extract_many_from_dir(report_dir, candidate_suffixes):
-    found = []
-    for root, _, files in os.walk(report_dir):
-        for name in files:
-            full = os.path.join(root, name)
-            rel = os.path.relpath(full, report_dir)
-            rel_norm = "/" + rel.replace("\\", "/")
-            if not any(_path_matches(rel_norm, sfx) for sfx in candidate_suffixes):
-                continue
-            try:
-                with open(full, "r", encoding="utf-8", errors="ignore") as fp:
-                    found.append((rel_norm, fp.read()))
-            except Exception:
-                continue
-    return found
-
-
-def _extract_first_text(report_path, candidate_suffixes):
-    if os.path.isdir(report_path):
-        for _, text in _extract_many_from_dir(report_path, candidate_suffixes):
-            if text.strip():
-                return text
-        return ""
-    for _, text in _extract_many_from_tar(report_path, candidate_suffixes):
-        if text.strip():
-            return text
-    return ""
-
-
-def _extract_all_text(report_path, candidate_suffixes):
-    if os.path.isdir(report_path):
-        return _extract_many_from_dir(report_path, candidate_suffixes)
-    return _extract_many_from_tar(report_path, candidate_suffixes)
-
-
-def _truncate_output(text, max_lines=200):
-    lines = text.splitlines()
-    if len(lines) <= max_lines:
-        return text.strip() if text.strip() else "No output found."
-    clipped = "\n".join(lines[:max_lines]).strip()
-    return f"{clipped}\n\n... output truncated ({len(lines) - max_lines} more lines)"
-
-
-def _filter_messages(messages_text, pattern):
-    if not messages_text.strip():
-        return "No log lines found in var/log/messages*."
-    regex = re.compile(pattern, flags=re.IGNORECASE)
-    matches = [ln for ln in messages_text.splitlines() if regex.search(ln)]
-    if not matches:
-        return "No matches found."
-    return _truncate_output("\n".join(matches), max_lines=300)
-
-
-def parse_sos_report_summary(archive_path):
-    summary = {
-        "hostname": "",
-        "os_release": "",
-        "kernel": "",
-        "uptime": "",
-        "report_date": "",
-    }
-
-    hostname_text = _extract_first_text(archive_path, ["/hostname"])
-    if hostname_text:
-        summary["hostname"] = hostname_text.strip().splitlines()[0] if hostname_text.strip() else ""
-
-    os_release_text = _extract_first_text(archive_path, ["/etc/redhat-release", "/etc/os-release"])
-    if os_release_text:
-        first_line = next((ln.strip() for ln in os_release_text.splitlines() if ln.strip()), "")
-        summary["os_release"] = first_line
-
-    uname_text = _extract_first_text(archive_path, ["/sos_commands/kernel/uname_-a", "/uname"])
-    if uname_text:
-        summary["kernel"] = next((ln.strip() for ln in uname_text.splitlines() if ln.strip()), "")
-
-    uptime_text = _extract_first_text(archive_path, ["/uptime", "/sos_commands/date/uptime"])
-    if uptime_text:
-        summary["uptime"] = next((ln.strip() for ln in uptime_text.splitlines() if ln.strip()), "")
-
-    date_text = _extract_first_text(archive_path, ["/sos_commands/date/date"])
-    if date_text:
-        summary["report_date"] = next((ln.strip() for ln in date_text.splitlines() if ln.strip()), "")
-
-    # Best-effort fallback: search archive name for hostname-like token.
-    if not summary["hostname"]:
-        filename = os.path.basename(archive_path.rstrip("\\/"))
-        m = re.search(r"sosreport-([^-\.]+)", filename, flags=re.IGNORECASE)
-        if m:
-            summary["hostname"] = m.group(1)
-
-    return summary
-
-
-def parse_sos_report_entries(report_path):
-    command_map = [
-        ("uname -a", ["/sos_commands/kernel/uname_-a", "/uname"]),
-        ("uptime", ["/sos_commands/date/uptime", "/uptime"]),
-        ("/proc/meminfo", ["/proc/meminfo"]),
-        ("ps aux", ["/sos_commands/process/ps_aux*", "/ps"]),
-        ("var/log/messages", ["/var/log/messages"]),
-        ("dmesg", ["/sos_commands/kernel/dmesg", "/dmesg"]),
-        ("ip addr", ["/sos_commands/networking/ip_addr*", "/sos_commands/networking/ip_-d_address*"]),
-        ("ip route", ["/sos_commands/networking/ip_route*", "/sos_commands/networking/ip_-4_route*"]),
-        ("iostat", ["/sos_commands/block/iostat*", "/sos_commands/scsi/iostat*"]),
-        ("lsblk", ["/sos_commands/block/lsblk*"]),
-        ("sar data", ["/var/log/sa/*", "/sos_commands/sar/*"]),
-        ("systemctl --failed", ["/sos_commands/systemd/systemctl_--failed*", "/sos_commands/systemd/systemctl_list-units_--failed*"]),
-    ]
-
-    entries = []
-    for title, paths in command_map:
-        text = _extract_first_text(report_path, paths)
-        entries.append(
-            {
-                "title": title,
-                "output": _truncate_output(text) if text else "No data found in SOS report.",
-            }
-        )
-
-    messages_files = _extract_all_text(report_path, ["/var/log/messages*"])
-    messages_text = "\n".join([txt for _, txt in messages_files if txt])
-
-    pattern1 = r"kernel: error|kernel: warning|segfault|kernel panic|soft lockup|hard lockup|hung task|BUG:|Oops:|Call Trace:|tainted|EDAC|I/O error|blk_update_request|read-only file system|EXT4-fs error|EXT4-fs warning|xfs_error|buffer I/O error|SCSI error|device not ready|write error|nic link is down|link is not ready|tx hang|packet dropped|duplicate address|RTNETLINK answers|DHCP timeout|ARP failure|firmware: failed|PCIe Bus Error|uncorrected error|MCE:|ECC error|Out of memory|OOM-killer|page allocation failure|swap exhausted|Failed to start|Unit entered failed state|Restarting too quickly|authentication failure|permission denied|Failed password|TLS handshake failure|timeout waiting|connection reset|too many open files|bind failed|socket error|virtio|KVM: entry failed"
-    pattern2 = r"link is down|link is up|NIC Link is Down|NIC Link is Up|carrier lost|carrier recovered|eth.*down|eth.*up|enp.*down|enp.*up|port.*down|port.*up|state DOWN|state UP|rx loss|tx hang|resetting adapter|link flap|link failure|link state change|interface.*down|interface.*up|LACP|bond.*down|bond.*up|Dropped packet|netdev watchdog|PHY.*down|PHY.*up|Speed.*Duplex|mtu mismatch"
-
-    entries.append(
-        {
-            "title": "egrep critical patterns in var/log/messages*",
-            "output": _filter_messages(messages_text, pattern1),
-        }
-    )
-    entries.append(
-        {
-            "title": "egrep link/network patterns in var/log/messages*",
-            "output": _filter_messages(messages_text, pattern2),
-        }
-    )
-    return entries
-
-
-GRAPH_OPTIONS = ["cpu", "memory", "disk", "network", "network_edev", "total_process_count"]
+GRAPH_OPTIONS = ["cpu", "memory", "disk", "network", "network_edev", "socket", "total_process_count"]
 
 
 def _add_cpu_dropdown(fig, cpu_list):
@@ -295,6 +74,7 @@ def index():
     disk_graph = None
     net_graph = None
     net_err_graph = None
+    socket_graph = None
     process_graph = None
     error_message = None
     hostname = ""
@@ -305,63 +85,12 @@ def index():
     selected_cpus = ["all"]
     selected_ifaces = []
     selected_disks = []
-    active_tab = "sar"
-    sos_error_message = None
-    sos_summary = None
-    sos_entries = []
-    selected_sos_file = None
 
     sa_files = sorted(_get_sa_files())
-    sos_files = sorted(_get_sos_files())
 
     tz = "UTC"
     selected = None
     if request.method == "POST":
-        active_tab = request.form.get("tab") or "sar"
-        if active_tab == "sos":
-            selected_sos_file = request.form.get("selected_sos_file")
-            sos_path = (
-                os.path.join(SOS_FOLDER, selected_sos_file)
-                if selected_sos_file and selected_sos_file in sos_files
-                else None
-            )
-            if sos_path and os.path.exists(sos_path):
-                sos_summary = parse_sos_report_summary(sos_path)
-                sos_entries = parse_sos_report_entries(sos_path)
-            else:
-                sos_error_message = "Please select a SOS report folder or archive from the sos folder."
-            return render_template(
-                "index.html",
-                active_tab=active_tab,
-                sos_files=sos_files,
-                selected_sos_file=selected_sos_file,
-                sos_summary=sos_summary,
-                sos_entries=sos_entries,
-                sos_error_message=sos_error_message,
-                cpu_graph=cpu_graph,
-                mem_graph=mem_graph,
-                disk_graph=disk_graph,
-                net_graph=net_graph,
-                net_err_graph=net_err_graph,
-                process_graph=process_graph,
-                sa_files=sa_files,
-                error_message=error_message,
-                hostname=hostname,
-                cpu_list=cpu_list,
-                iface_list=iface_list,
-                disk_list=disk_list,
-                selected_graphs=selected_graphs,
-                selected_cpus=selected_cpus,
-                selected_ifaces=selected_ifaces,
-                selected_disks=selected_disks,
-                selected_cpu_metrics=[],
-                selected_network_metrics=[],
-                selected_disk_metrics=[],
-                graph_options=GRAPH_OPTIONS,
-                selected_file=None,
-                timezone=tz,
-            )
-
         tz = request.form.get("timezone") or "UTC"
         selected_graphs = request.form.getlist("graphs") or list(GRAPH_OPTIONS)
         selected_cpus = request.form.getlist("cpus")
@@ -721,6 +450,36 @@ def index():
                     except Exception:
                         pass
 
+                if "socket" in selected_graphs:
+                    try:
+                        sock = get_socket_info_data(path, "UTC", tz)
+                        if not sock.empty:
+                            sock_fig = px.line(
+                                sock,
+                                x="time",
+                                y=["totsck", "tcpsck", "udpsck", "rawsck", "ip_frag", "tcp_tw"],
+                                title="Socket Usage (sar -n SOCK)",
+                            )
+                            name_map = {
+                                "totsck": "totsck",
+                                "tcpsck": "tcpsck",
+                                "udpsck": "udpsck",
+                                "rawsck": "rawsck",
+                                "ip_frag": "ip-frag",
+                                "tcp_tw": "tcp-tw",
+                            }
+                            for t in sock_fig.data:
+                                t.name = name_map.get(str(t.name), t.name)
+                                t.hovertemplate = f"<b>{t.name}</b><br>Time: %{{x}}<br>Value: %{{y:.0f}}<extra></extra>"
+                            sock_fig.update_layout(
+                                xaxis_title="Time",
+                                yaxis_title="Count",
+                                legend=dict(title="Metric"),
+                            )
+                            socket_graph = sock_fig.to_html(full_html=False)
+                    except Exception:
+                        pass
+
                 if "total_process_count" in selected_graphs:
                     try:
                         proc = get_total_process_count_data(path, "UTC", tz)
@@ -764,17 +523,12 @@ def index():
 
     return render_template(
         "index.html",
-        active_tab=active_tab,
-        sos_files=sos_files,
-        selected_sos_file=selected_sos_file,
-        sos_summary=sos_summary,
-        sos_entries=sos_entries,
-        sos_error_message=sos_error_message,
         cpu_graph=cpu_graph,
         mem_graph=mem_graph,
         disk_graph=disk_graph,
         net_graph=net_graph,
         net_err_graph=net_err_graph,
+        socket_graph=socket_graph,
         process_graph=process_graph,
         sa_files=sa_files,
         error_message=error_message,
@@ -797,5 +551,4 @@ def index():
 
 if __name__ == "__main__":
     _ensure_sa_folder()
-    _ensure_sos_folder()
     app.run(debug=True)

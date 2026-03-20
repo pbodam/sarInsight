@@ -18,7 +18,7 @@ RUN pip install --upgrade pip \
 
 COPY . /app
 
-RUN mkdir -p /app/sa /app/sos
+RUN mkdir -p /app/sa
 
 EXPOSE 5000
 
