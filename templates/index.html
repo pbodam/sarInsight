@@ -45,6 +45,13 @@
             font-size: 1rem;
             width: 100%;
         }
+        /* Compact multi-selects (CPU / disk / iface): few visible rows, scroll inside */
+        select.resource-multiselect {
+            max-height: 9.5rem;
+            padding: 0.4rem 0.5rem;
+            font-size: 0.9rem;
+            line-height: 1.35;
+        }
         button[type="submit"] {
             padding: 0.75rem 2rem;
             background: var(--accent);
@@ -62,31 +69,94 @@
         .graph-section h3 { color: var(--muted); margin-bottom: 0.5rem; font-weight: 500; }
         .graph-wrapper { margin-bottom: 2rem; }
         .hostname { color: var(--muted); margin: 0 0 1rem 0; }
-        .checkbox-group { display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; }
+        .checkbox-group { display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; align-items: center; }
         .checkbox-label { display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; }
         .checkbox-label input { margin: 0; }
         .graphs-select { grid-column: 1 / -1; }
+        /* CPU / network / disk list pickers: one row, three narrow columns */
+        .resource-pickers-row {
+            grid-column: 1 / -1;
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 1rem 1.25rem;
+            align-items: start;
+        }
+        @media (max-width: 960px) {
+            .resource-pickers-row {
+                grid-template-columns: 1fr;
+            }
+        }
+        .resource-picker-col {
+            min-width: 0;
+            max-width: 100%;
+        }
+        .resource-picker-col .cpu-toolbar input[type="search"],
+        .resource-picker-col .list-toolbar input[type="search"] {
+            max-width: 100%;
+            flex: 1 1 auto;
+            min-width: 0;
+        }
         .hint { display: block; margin-top: 0.25rem; color: var(--muted); font-size: 0.85rem; }
+        .cpu-toolbar {
+            display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem;
+            align-items: center; margin: 0.5rem 0 0.25rem 0;
+        }
+        .cpu-toolbar input[type="search"],
+        .cpu-toolbar input[type="number"] {
+            padding: 0.45rem 0.65rem; border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.1);
+            background: var(--bg); color: var(--text);
+        }
+        .cpu-toolbar input[type="search"] { min-width: 10rem; flex: 1 1 8rem; max-width: 20rem; }
+        .cpu-toolbar .cpu-range-input { width: 4.5rem; min-width: 0; }
+        .list-toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem; align-items: center; margin: 0.5rem 0 0.25rem 0; }
+        .list-toolbar input[type="search"] {
+            padding: 0.45rem 0.65rem; border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.1);
+            background: var(--bg); color: var(--text);
+            min-width: 10rem; flex: 1 1 8rem; max-width: 20rem;
+        }
+        .btn-tiny {
+            padding: 0.35rem 0.65rem; font-size: 0.82rem; border-radius: 6px;
+            border: 1px solid rgba(255,255,255,0.15);
+            background: var(--surface); color: var(--text); cursor: pointer;
+        }
+        .btn-tiny:hover { border-color: var(--accent); color: var(--accent); }
+        .corner-head {
+            display: flex; flex-direction: column; gap: 0.35rem;
+            align-items: flex-start; justify-content: flex-start;
+        }
+        .corner-head .cpu-corner-title { font-weight: 600; color: var(--muted); }
+        .cpu-master-all { font-size: 0.85rem; color: var(--text); cursor: pointer; margin: 0; }
+        .metric-head {
+            display: flex; flex-direction: column; gap: 0.25rem;
+            align-items: stretch;
+        }
+        .metric-head-btns { display: flex; gap: 0.2rem; justify-content: center; flex-wrap: wrap; }
+        .metric-head-btns .btn-tiny { padding: 0.15rem 0.4rem; font-size: 0.72rem; }
         .cpu-metrics-grid {
-            max-height: 320px; overflow-y: auto;
+            max-height: min(70vh, 720px); overflow-y: auto;
             border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
             padding: 0.75rem; margin-top: 0.5rem;
-            display: grid; grid-template-columns: auto repeat(6, 1fr);
-            gap: 0.5rem; align-items: center; font-size: 0.9rem;
+            display: grid;
+            grid-template-columns: minmax(4rem, auto) repeat(6, minmax(0, 1fr));
+            gap: 0.5rem; align-items: center; font-size: 0.88rem;
         }
         .network-metrics-grid {
-            max-height: 320px; overflow-y: auto;
+            max-height: min(70vh, 720px); overflow-y: auto;
             border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
             padding: 0.75rem; margin-top: 0.5rem;
-            display: grid; grid-template-columns: auto repeat(8, 1fr);
-            gap: 0.5rem; align-items: center; font-size: 0.9rem;
+            display: grid;
+            grid-template-columns: minmax(4rem, auto) repeat(8, minmax(0, 1fr));
+            gap: 0.5rem; align-items: center; font-size: 0.88rem;
         }
         .disk-metrics-grid {
-            max-height: 320px; overflow-y: auto;
+            max-height: min(70vh, 720px); overflow-y: auto;
             border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
             padding: 0.75rem; margin-top: 0.5rem;
-            display: grid; grid-template-columns: auto repeat(4, 1fr);
-            gap: 0.5rem; align-items: center; font-size: 0.9rem;
+            display: grid;
+            grid-template-columns: minmax(4rem, auto) repeat(4, minmax(0, 1fr));
+            gap: 0.5rem; align-items: center; font-size: 0.88rem;
         }
         .cpu-metrics-grid .header, .network-metrics-grid .header, .disk-metrics-grid .header { font-weight: 600; color: var(--muted); }
         .cpu-metrics-grid .row-label, .network-metrics-grid .row-label, .disk-metrics-grid .row-label { font-weight: 500; }
@@ -107,7 +177,7 @@
         <div class="form-grid">
             <div class="form-group">
                 <label>Select SAR file from sa folder</label>
-                <select name="selected_file">
+                <select name="selected_file" id="sar_file_select">
                     <option value="">-- Choose file --</option>
                     {% for f in sa_files %}
                     <option value="{{ f }}" {% if selected_file == f %}selected{% endif %}>{{ f }}</option>
@@ -125,60 +195,98 @@
             </div>
             <div class="form-group graphs-select">
                 <label>Graphs to display</label>
-                <div class="checkbox-group">
+                <div class="checkbox-group" id="graphs_checkbox_group">
                     <label class="checkbox-label"><input type="checkbox" id="select_all_graphs"> Select all</label>
                     {% for opt in graph_options %}
                     <label class="checkbox-label">
                         <input type="checkbox" name="graphs" value="{{ opt }}" {% if opt in selected_graphs %}checked{% endif %}>
-                        {{ opt.replace("_", " ").title() }}
+                        {{ graph_labels[opt] }}
                     </label>
                     {% endfor %}
                 </div>
             </div>
-            {% if cpu_list %}
-            <div class="form-group">
-                <label>CPU(s) to display</label>
-                <select name="cpus" id="cpu_select" multiple size="{{ [4, cpu_list|length]|min }}">
-                    {% for c in cpu_list %}
-                    <option value="{{ c }}" {% if c in selected_cpus %}selected{% endif %}>CPU {{ c }}</option>
-                    {% endfor %}
-                </select>
-                <small class="hint">Hold Ctrl/Cmd to select multiple</small>
-            </div>
-            <div class="form-group" id="cpu_metrics_section" style="display:none;">
-                <label>Metrics per CPU (pick specific combinations, e.g. %system for CPU 79, %iowait for CPU 20)</label>
-                <div id="cpu_metrics_grid" class="cpu-metrics-grid"></div>
-                <small class="hint">Check the metrics you want for each selected CPU</small>
+            {% if cpu_list or iface_list or disk_list %}
+            <div class="resource-pickers-row graphs-select">
+                {% if cpu_list %}
+                <div class="form-group resource-picker-col">
+                    <label>CPU(s) <span id="cpu_selected_count" class="hint" style="display:inline;"></span></label>
+                    <div class="cpu-toolbar">
+                        <input type="search" id="cpu_filter" placeholder="Filter CPUs" autocomplete="off" aria-label="Filter CPU list">
+                        <button type="button" class="btn-tiny" id="cpu_sel_all" title="Select every CPU in the file">All</button>
+                        <button type="button" class="btn-tiny" id="cpu_sel_visible" title="Select CPUs that match the filter">Filtered</button>
+                        <button type="button" class="btn-tiny" id="cpu_sel_clear">Clear</button>
+                        <span class="hint" style="margin:0;">Range</span>
+                        <input type="number" class="cpu-range-input" id="cpu_range_lo" min="0" step="1" placeholder="from" aria-label="CPU range from">
+                        <span class="hint" style="margin:0;">–</span>
+                        <input type="number" class="cpu-range-input" id="cpu_range_hi" min="0" step="1" placeholder="to" aria-label="CPU range to">
+                        <button type="button" class="btn-tiny" id="cpu_range_apply">Apply</button>
+                    </div>
+                    {% set cpu_sel_rows = [6, cpu_list|length]|min %}
+                    <select name="cpus" id="cpu_select" class="resource-multiselect" multiple size="{{ cpu_sel_rows }}">
+                        {% for c in cpu_list %}
+                        <option value="{{ c }}" {% if c in selected_cpus %}selected{% endif %}>CPU {{ c }}</option>
+                        {% endfor %}
+                    </select>
+                    <small class="hint">Toolbar + Ctrl/Cmd. Empty metric matrix → averaged CPU.</small>
+                </div>
+                {% endif %}
+                {% if iface_list %}
+                <div class="form-group resource-picker-col">
+                    <label>Network <span id="iface_selected_count" class="hint" style="display:inline;"></span></label>
+                    <div class="list-toolbar">
+                        <input type="search" id="iface_filter" placeholder="Filter ifaces" autocomplete="off" aria-label="Filter interface list">
+                        <button type="button" class="btn-tiny" id="iface_sel_all">All</button>
+                        <button type="button" class="btn-tiny" id="iface_sel_visible">Filtered</button>
+                        <button type="button" class="btn-tiny" id="iface_sel_clear">Clear</button>
+                    </div>
+                    {% set iface_sel_rows = [6, iface_list|length]|min %}
+                    <select name="ifaces" id="iface_select" class="resource-multiselect" multiple size="{{ iface_sel_rows }}">
+                        {% for i in iface_list %}
+                        <option value="{{ i }}" {% if i in selected_ifaces %}selected{% endif %}>{{ i }}</option>
+                        {% endfor %}
+                    </select>
+                    <small class="hint">Applies to <strong>Network</strong> (DEV) and <strong>Network Errors</strong> (EDEV). Leave none selected to include all interfaces.</small>
+                </div>
+                {% endif %}
+                {% if disk_list %}
+                <div class="form-group resource-picker-col">
+                    <label>Disk <span id="disk_selected_count" class="hint" style="display:inline;"></span></label>
+                    <div class="list-toolbar">
+                        <input type="search" id="disk_filter" placeholder="Filter devices" autocomplete="off" aria-label="Filter disk list">
+                        <button type="button" class="btn-tiny" id="disk_sel_all">All</button>
+                        <button type="button" class="btn-tiny" id="disk_sel_visible">Filtered</button>
+                        <button type="button" class="btn-tiny" id="disk_sel_clear">Clear</button>
+                    </div>
+                    {% set disk_sel_rows = [6, disk_list|length]|min %}
+                    <select name="disks" id="disk_select" class="resource-multiselect" multiple size="{{ disk_sel_rows }}">
+                        {% for d in disk_list %}
+                        <option value="{{ d }}" {% if d in selected_disks %}selected{% endif %}>{{ d }}</option>
+                        {% endfor %}
+                    </select>
+                    <small class="hint">Empty metric matrix → default await/util.</small>
+                </div>
+                {% endif %}
             </div>
             {% endif %}
-            {% if disk_list %}
-            <div class="form-group">
-                <label>Disk device(s) to display</label>
-                <select name="disks" id="disk_select" multiple size="{{ [4, disk_list|length]|min }}">
-                    {% for d in disk_list %}
-                    <option value="{{ d }}" {% if d in selected_disks %}selected{% endif %}>{{ d }}</option>
-                    {% endfor %}
-                </select>
-                <small class="hint">Hold Ctrl/Cmd to select multiple</small>
-            </div>
-            <div class="form-group" id="disk_metrics_section" style="display:none;">
-                <label>Disk metrics (pick combinations, e.g. await for sda, util for sdb)</label>
-                <div id="disk_metrics_grid" class="disk-metrics-grid"></div>
+            {% if cpu_list %}
+            <div class="form-group graphs-select" id="cpu_metrics_section" style="display:none;">
+                <label>Metrics per CPU</label>
+                <div id="cpu_metrics_grid" class="cpu-metrics-grid"></div>
+                <small class="hint">Tick cells to plot, or use <strong>+ / −</strong> under a column for that metric on all selected CPUs. Corner <strong>All</strong> toggles the whole matrix. Leave all unticked for averaged CPU usage.</small>
             </div>
             {% endif %}
             {% if iface_list %}
-            <div class="form-group">
-                <label>Network interface(s) to display</label>
-                <select name="ifaces" id="iface_select" multiple size="{{ [4, iface_list|length]|min }}">
-                    {% for i in iface_list %}
-                    <option value="{{ i }}" {% if i in selected_ifaces %}selected{% endif %}>{{ i }}</option>
-                    {% endfor %}
-                </select>
-                <small class="hint">Hold Ctrl/Cmd to select multiple interfaces</small>
-            </div>
-            <div class="form-group" id="network_metrics_section" style="display:none;">
-                <label>Network DEV metrics (pick combinations, e.g. rxpck/s for bond0, txkB/s for vlan100)</label>
+            <div class="form-group graphs-select" id="network_metrics_section" style="display:none;">
+                <label>Network metrics per interface</label>
                 <div id="network_metrics_grid" class="network-metrics-grid"></div>
+                <small class="hint">Tick cells or use <strong>+ / −</strong> under a column for that metric on all interfaces. Corner <strong>All</strong> toggles the whole matrix. Leave unticked for default rx/tx packet rates.</small>
+            </div>
+            {% endif %}
+            {% if disk_list %}
+            <div class="form-group graphs-select" id="disk_metrics_section" style="display:none;">
+                <label>Disk metrics per device</label>
+                <div id="disk_metrics_grid" class="disk-metrics-grid"></div>
+                <small class="hint">Tick cells or use <strong>+ / −</strong> under a column for that metric on all devices. Corner <strong>All</strong> toggles the whole matrix. Leave unticked for default await/util chart.</small>
             </div>
             {% endif %}
         </div>
@@ -189,10 +297,27 @@
     </div>
 </form>
 <script>
+function syncSelectAllGraphsMaster() {
+    var master = document.getElementById('select_all_graphs');
+    var boxes = document.querySelectorAll('input[name="graphs"]');
+    if (!master || !boxes.length) return;
+    var c = 0;
+    boxes.forEach(function(b) { if (b.checked) c++; });
+    master.indeterminate = c > 0 && c < boxes.length;
+    master.checked = c === boxes.length;
+}
+
 document.getElementById('select_all_graphs')?.addEventListener('change', function() {
     var checkboxes = document.querySelectorAll('input[name="graphs"]');
     checkboxes.forEach(function(cb) { cb.checked = this.checked; }, this);
+    this.indeterminate = false;
 });
+
+document.getElementById('graphs_checkbox_group')?.addEventListener('change', function(e) {
+    if (e.target && e.target.name === 'graphs') syncSelectAllGraphsMaster();
+});
+
+syncSelectAllGraphsMaster();
 
 var CPU_METRICS = [
     { id: 'user', label: '%user' },
@@ -203,40 +328,139 @@ var CPU_METRICS = [
     { id: 'total', label: 'Total' }
 ];
 
+function syncCpuMatrixMasterCheckbox() {
+    var master = document.getElementById('cpu_matrix_select_all');
+    if (!master) return;
+    var cells = document.querySelectorAll('#cpu_metrics_grid input[name="cpu_metrics"]');
+    if (!cells.length) {
+        master.checked = false;
+        master.indeterminate = false;
+        return;
+    }
+    var n = cells.length;
+    var checked = 0;
+    cells.forEach(function(cb) { if (cb.checked) checked++; });
+    master.indeterminate = checked > 0 && checked < n;
+    master.checked = checked === n;
+}
+
+function setCpuMetricColumn(metricId, checked) {
+    var grid = document.getElementById('cpu_metrics_grid');
+    if (!grid) return;
+    var suffix = '_' + metricId;
+    grid.querySelectorAll('input[name="cpu_metrics"]').forEach(function(cb) {
+        if (cb.value.slice(-suffix.length) === suffix) cb.checked = checked;
+    });
+    syncCpuMatrixMasterCheckbox();
+}
+
+function setAllCpuMetricCells(checked) {
+    document.querySelectorAll('#cpu_metrics_grid input[name="cpu_metrics"]').forEach(function(cb) {
+        cb.checked = checked;
+    });
+    var master = document.getElementById('cpu_matrix_select_all');
+    if (master) master.indeterminate = false;
+    syncCpuMatrixMasterCheckbox();
+}
+
+function applyCpuFilter() {
+    var inp = document.getElementById('cpu_filter');
+    var sel = document.getElementById('cpu_select');
+    if (!inp || !sel) return;
+    var q = (inp.value || '').trim().toLowerCase();
+    Array.from(sel.options).forEach(function(opt) {
+        var t = (opt.textContent || '').toLowerCase();
+        var v = String(opt.value || '').toLowerCase();
+        opt.hidden = !!(q && t.indexOf(q) < 0 && v.indexOf(q) < 0);
+    });
+}
+
+function updateCpuSelectedCount() {
+    var sel = document.getElementById('cpu_select');
+    var el = document.getElementById('cpu_selected_count');
+    if (!sel || !el) return;
+    var n = sel.selectedOptions.length;
+    el.textContent = n ? '(' + n + ' selected)' : '';
+}
+
 function buildCpuMetricsGrid() {
     var sel = document.getElementById('cpu_select');
     var section = document.getElementById('cpu_metrics_section');
     var grid = document.getElementById('cpu_metrics_grid');
     if (!sel || !section || !grid) return;
     var selected = Array.from(sel.selectedOptions).map(function(o) { return o.value; });
+    updateCpuSelectedCount();
     if (selected.length === 0) {
         section.style.display = 'none';
         return;
     }
     var saved = {};
+    var savedFromServer = [];
     try {
-        var savedList = JSON.parse(document.getElementById('saved_cpu_metrics').textContent || '[]');
-        savedList.forEach(function(v) { saved[v] = true; });
-    } catch(e) {}
+        savedFromServer = JSON.parse(document.getElementById('saved_cpu_metrics').textContent || '[]');
+        if (Array.isArray(savedFromServer)) savedFromServer.forEach(function(v) { saved[v] = true; });
+    } catch (e) {}
     grid.querySelectorAll('input[name="cpu_metrics"]').forEach(function(cb) {
         if (cb.checked) saved[cb.value] = true;
     });
     section.style.display = 'block';
     grid.innerHTML = '';
-    grid.appendChild(function() {
-        var d = document.createElement('div'); d.className = 'header'; d.textContent = 'CPU'; return d;
-    }());
-    CPU_METRICS.forEach(function(m) {
-        var d = document.createElement('div'); d.className = 'header'; d.textContent = m.label; grid.appendChild(d);
+    var corner = document.createElement('div');
+    corner.className = 'header corner-head';
+    var cornerTitle = document.createElement('div');
+    cornerTitle.className = 'cpu-corner-title';
+    cornerTitle.textContent = 'CPU';
+    corner.appendChild(cornerTitle);
+    var masterLabel = document.createElement('label');
+    masterLabel.className = 'checkbox-label cpu-master-all';
+    var masterCb = document.createElement('input');
+    masterCb.type = 'checkbox';
+    masterCb.id = 'cpu_matrix_select_all';
+    masterCb.title = 'Select or clear every metric for every selected CPU';
+    masterCb.addEventListener('change', function() {
+        masterCb.indeterminate = false;
+        setAllCpuMetricCells(masterCb.checked);
     });
-    selected.sort(function(a,b) {
+    masterLabel.appendChild(masterCb);
+    masterLabel.appendChild(document.createTextNode(' All'));
+    corner.appendChild(masterLabel);
+    grid.appendChild(corner);
+    CPU_METRICS.forEach(function(m) {
+        var d = document.createElement('div');
+        d.className = 'header metric-head';
+        var sp = document.createElement('span');
+        sp.textContent = m.label;
+        d.appendChild(sp);
+        var btns = document.createElement('div');
+        btns.className = 'metric-head-btns';
+        var bp = document.createElement('button');
+        bp.type = 'button';
+        bp.className = 'btn-tiny';
+        bp.textContent = '+';
+        bp.title = 'Select this metric for every selected CPU';
+        bp.addEventListener('click', function() { setCpuMetricColumn(m.id, true); });
+        var bm = document.createElement('button');
+        bm.type = 'button';
+        bm.className = 'btn-tiny';
+        bm.textContent = '−';
+        bm.title = 'Clear this metric for every selected CPU';
+        bm.addEventListener('click', function() { setCpuMetricColumn(m.id, false); });
+        btns.appendChild(bp);
+        btns.appendChild(bm);
+        d.appendChild(btns);
+        grid.appendChild(d);
+    });
+    selected.sort(function(a, b) {
         if (a === 'all') return -1;
         if (b === 'all') return 1;
         var na = parseInt(a, 10), nb = parseInt(b, 10);
         return (isNaN(na) ? 0 : na) - (isNaN(nb) ? 0 : nb);
     });
     selected.forEach(function(cpu) {
-        var lb = document.createElement('div'); lb.className = 'row-label'; lb.textContent = 'CPU ' + cpu; grid.appendChild(lb);
+        var lb = document.createElement('div');
+        lb.className = 'row-label';
+        lb.textContent = 'CPU ' + cpu;
+        grid.appendChild(lb);
         CPU_METRICS.forEach(function(m) {
             var val = cpu + '_' + m.id;
             var label = document.createElement('label');
@@ -251,10 +475,49 @@ function buildCpuMetricsGrid() {
             grid.appendChild(label);
         });
     });
+    syncCpuMatrixMasterCheckbox();
 }
 
 document.getElementById('cpu_select')?.addEventListener('change', buildCpuMetricsGrid);
+document.getElementById('cpu_filter')?.addEventListener('input', applyCpuFilter);
+document.getElementById('cpu_sel_all')?.addEventListener('click', function() {
+    var sel = document.getElementById('cpu_select');
+    if (!sel) return;
+    Array.from(sel.options).forEach(function(o) { o.selected = true; });
+    buildCpuMetricsGrid();
+});
+document.getElementById('cpu_sel_visible')?.addEventListener('click', function() {
+    var sel = document.getElementById('cpu_select');
+    if (!sel) return;
+    Array.from(sel.options).forEach(function(o) {
+        if (!o.hidden) o.selected = true;
+    });
+    buildCpuMetricsGrid();
+});
+document.getElementById('cpu_sel_clear')?.addEventListener('click', function() {
+    var sel = document.getElementById('cpu_select');
+    if (!sel) return;
+    Array.from(sel.options).forEach(function(o) { o.selected = false; });
+    buildCpuMetricsGrid();
+});
+document.getElementById('cpu_range_apply')?.addEventListener('click', function() {
+    var lo = parseInt(document.getElementById('cpu_range_lo').value, 10);
+    var hi = parseInt(document.getElementById('cpu_range_hi').value, 10);
+    var sel = document.getElementById('cpu_select');
+    if (!sel || isNaN(lo) || isNaN(hi)) return;
+    if (lo > hi) { var t = lo; lo = hi; hi = t; }
+    Array.from(sel.options).forEach(function(o) {
+        var n = parseInt(o.value, 10);
+        if (!isNaN(n) && n >= lo && n <= hi) o.selected = true;
+    });
+    buildCpuMetricsGrid();
+});
+document.getElementById('cpu_metrics_section')?.addEventListener('change', function(e) {
+    if (e.target && e.target.name === 'cpu_metrics') syncCpuMatrixMasterCheckbox();
+});
+
 if (document.getElementById('cpu_select')) {
+    applyCpuFilter();
     buildCpuMetricsGrid();
 }
 
@@ -265,12 +528,67 @@ var DISK_METRICS = [
     { id: 'util', label: '%util' }
 ];
 
+function syncDiskMatrixMasterCheckbox() {
+    var master = document.getElementById('disk_matrix_select_all');
+    if (!master) return;
+    var cells = document.querySelectorAll('#disk_metrics_grid input[name="disk_metrics"]');
+    if (!cells.length) {
+        master.checked = false;
+        master.indeterminate = false;
+        return;
+    }
+    var n = cells.length, checked = 0;
+    cells.forEach(function(cb) { if (cb.checked) checked++; });
+    master.indeterminate = checked > 0 && checked < n;
+    master.checked = checked === n;
+}
+
+function setDiskMetricColumn(metricId, checked) {
+    var grid = document.getElementById('disk_metrics_grid');
+    if (!grid) return;
+    var suf = '::' + metricId;
+    grid.querySelectorAll('input[name="disk_metrics"]').forEach(function(cb) {
+        if (cb.value.slice(-suf.length) === suf) cb.checked = checked;
+    });
+    syncDiskMatrixMasterCheckbox();
+}
+
+function setAllDiskMetricCells(checked) {
+    document.querySelectorAll('#disk_metrics_grid input[name="disk_metrics"]').forEach(function(cb) {
+        cb.checked = checked;
+    });
+    var master = document.getElementById('disk_matrix_select_all');
+    if (master) master.indeterminate = false;
+    syncDiskMatrixMasterCheckbox();
+}
+
+function applyDiskFilter() {
+    var inp = document.getElementById('disk_filter');
+    var sel = document.getElementById('disk_select');
+    if (!inp || !sel) return;
+    var q = (inp.value || '').trim().toLowerCase();
+    Array.from(sel.options).forEach(function(opt) {
+        var t = (opt.textContent || '').toLowerCase();
+        var v = String(opt.value || '').toLowerCase();
+        opt.hidden = !!(q && t.indexOf(q) < 0 && v.indexOf(q) < 0);
+    });
+}
+
+function updateDiskSelectedCount() {
+    var sel = document.getElementById('disk_select');
+    var el = document.getElementById('disk_selected_count');
+    if (!sel || !el) return;
+    var n = sel.selectedOptions.length;
+    el.textContent = n ? '(' + n + ' selected)' : '';
+}
+
 function buildDiskMetricsGrid() {
     var sel = document.getElementById('disk_select');
     var section = document.getElementById('disk_metrics_section');
     var grid = document.getElementById('disk_metrics_grid');
     if (!sel || !section || !grid) return;
     var selected = Array.from(sel.selectedOptions).map(function(o) { return o.value; });
+    updateDiskSelectedCount();
     if (selected.length === 0) {
         section.style.display = 'none';
         return;
@@ -278,21 +596,64 @@ function buildDiskMetricsGrid() {
     var saved = {};
     try {
         var savedList = JSON.parse(document.getElementById('saved_disk_metrics').textContent || '[]');
-        savedList.forEach(function(v) { saved[v] = true; });
-    } catch(e) {}
+        if (Array.isArray(savedList)) savedList.forEach(function(v) { saved[v] = true; });
+    } catch (e) {}
     grid.querySelectorAll('input[name="disk_metrics"]').forEach(function(cb) {
         if (cb.checked) saved[cb.value] = true;
     });
     section.style.display = 'block';
     grid.innerHTML = '';
-    grid.appendChild(function() {
-        var d = document.createElement('div'); d.className = 'header'; d.textContent = 'Device'; return d;
-    }());
-    DISK_METRICS.forEach(function(m) {
-        var d = document.createElement('div'); d.className = 'header'; d.textContent = m.label; grid.appendChild(d);
+    var corner = document.createElement('div');
+    corner.className = 'header corner-head';
+    var ct = document.createElement('div');
+    ct.className = 'cpu-corner-title';
+    ct.textContent = 'Device';
+    corner.appendChild(ct);
+    var ml = document.createElement('label');
+    ml.className = 'checkbox-label cpu-master-all';
+    var mcb = document.createElement('input');
+    mcb.type = 'checkbox';
+    mcb.id = 'disk_matrix_select_all';
+    mcb.title = 'Select or clear every metric for every selected device';
+    mcb.addEventListener('change', function() {
+        mcb.indeterminate = false;
+        setAllDiskMetricCells(mcb.checked);
     });
+    ml.appendChild(mcb);
+    ml.appendChild(document.createTextNode(' All'));
+    corner.appendChild(ml);
+    grid.appendChild(corner);
+    DISK_METRICS.forEach(function(m) {
+        var d = document.createElement('div');
+        d.className = 'header metric-head';
+        var sp = document.createElement('span');
+        sp.textContent = m.label;
+        d.appendChild(sp);
+        var btns = document.createElement('div');
+        btns.className = 'metric-head-btns';
+        var bp = document.createElement('button');
+        bp.type = 'button';
+        bp.className = 'btn-tiny';
+        bp.textContent = '+';
+        bp.title = 'Select this metric for every selected device';
+        bp.addEventListener('click', function() { setDiskMetricColumn(m.id, true); });
+        var bm = document.createElement('button');
+        bm.type = 'button';
+        bm.className = 'btn-tiny';
+        bm.textContent = '−';
+        bm.title = 'Clear this metric for every selected device';
+        bm.addEventListener('click', function() { setDiskMetricColumn(m.id, false); });
+        btns.appendChild(bp);
+        btns.appendChild(bm);
+        d.appendChild(btns);
+        grid.appendChild(d);
+    });
+    selected.sort();
     selected.forEach(function(dev) {
-        var lb = document.createElement('div'); lb.className = 'row-label'; lb.textContent = dev; grid.appendChild(lb);
+        var lb = document.createElement('div');
+        lb.className = 'row-label';
+        lb.textContent = dev;
+        grid.appendChild(lb);
         DISK_METRICS.forEach(function(m) {
             var val = dev + '::' + m.id;
             var label = document.createElement('label');
@@ -307,10 +668,34 @@ function buildDiskMetricsGrid() {
             grid.appendChild(label);
         });
     });
+    syncDiskMatrixMasterCheckbox();
 }
 
 document.getElementById('disk_select')?.addEventListener('change', buildDiskMetricsGrid);
+document.getElementById('disk_filter')?.addEventListener('input', applyDiskFilter);
+document.getElementById('disk_sel_all')?.addEventListener('click', function() {
+    var s = document.getElementById('disk_select');
+    if (!s) return;
+    Array.from(s.options).forEach(function(o) { o.selected = true; });
+    buildDiskMetricsGrid();
+});
+document.getElementById('disk_sel_visible')?.addEventListener('click', function() {
+    var s = document.getElementById('disk_select');
+    if (!s) return;
+    Array.from(s.options).forEach(function(o) { if (!o.hidden) o.selected = true; });
+    buildDiskMetricsGrid();
+});
+document.getElementById('disk_sel_clear')?.addEventListener('click', function() {
+    var s = document.getElementById('disk_select');
+    if (!s) return;
+    Array.from(s.options).forEach(function(o) { o.selected = false; });
+    buildDiskMetricsGrid();
+});
+document.getElementById('disk_metrics_section')?.addEventListener('change', function(e) {
+    if (e.target && e.target.name === 'disk_metrics') syncDiskMatrixMasterCheckbox();
+});
 if (document.getElementById('disk_select')) {
+    applyDiskFilter();
     buildDiskMetricsGrid();
 }
 
@@ -325,12 +710,67 @@ var NETWORK_METRICS = [
     { id: 'ifutil', label: '%ifutil' }
 ];
 
+function syncNetworkMatrixMasterCheckbox() {
+    var master = document.getElementById('network_matrix_select_all');
+    if (!master) return;
+    var cells = document.querySelectorAll('#network_metrics_grid input[name="network_metrics"]');
+    if (!cells.length) {
+        master.checked = false;
+        master.indeterminate = false;
+        return;
+    }
+    var n = cells.length, checked = 0;
+    cells.forEach(function(cb) { if (cb.checked) checked++; });
+    master.indeterminate = checked > 0 && checked < n;
+    master.checked = checked === n;
+}
+
+function setNetworkMetricColumn(metricId, checked) {
+    var grid = document.getElementById('network_metrics_grid');
+    if (!grid) return;
+    var suf = '::' + metricId;
+    grid.querySelectorAll('input[name="network_metrics"]').forEach(function(cb) {
+        if (cb.value.slice(-suf.length) === suf) cb.checked = checked;
+    });
+    syncNetworkMatrixMasterCheckbox();
+}
+
+function setAllNetworkMetricCells(checked) {
+    document.querySelectorAll('#network_metrics_grid input[name="network_metrics"]').forEach(function(cb) {
+        cb.checked = checked;
+    });
+    var master = document.getElementById('network_matrix_select_all');
+    if (master) master.indeterminate = false;
+    syncNetworkMatrixMasterCheckbox();
+}
+
+function applyIfaceFilter() {
+    var inp = document.getElementById('iface_filter');
+    var sel = document.getElementById('iface_select');
+    if (!inp || !sel) return;
+    var q = (inp.value || '').trim().toLowerCase();
+    Array.from(sel.options).forEach(function(opt) {
+        var t = (opt.textContent || '').toLowerCase();
+        var v = String(opt.value || '').toLowerCase();
+        opt.hidden = !!(q && t.indexOf(q) < 0 && v.indexOf(q) < 0);
+    });
+}
+
+function updateIfaceSelectedCount() {
+    var sel = document.getElementById('iface_select');
+    var el = document.getElementById('iface_selected_count');
+    if (!sel || !el) return;
+    var n = sel.selectedOptions.length;
+    el.textContent = n ? '(' + n + ' selected)' : '';
+}
+
 function buildNetworkMetricsGrid() {
     var sel = document.getElementById('iface_select');
     var section = document.getElementById('network_metrics_section');
     var grid = document.getElementById('network_metrics_grid');
     if (!sel || !section || !grid) return;
     var selected = Array.from(sel.selectedOptions).map(function(o) { return o.value; });
+    updateIfaceSelectedCount();
     if (selected.length === 0) {
         section.style.display = 'none';
         return;
@@ -338,21 +778,64 @@ function buildNetworkMetricsGrid() {
     var saved = {};
     try {
         var savedList = JSON.parse(document.getElementById('saved_network_metrics').textContent || '[]');
-        savedList.forEach(function(v) { saved[v] = true; });
-    } catch(e) {}
+        if (Array.isArray(savedList)) savedList.forEach(function(v) { saved[v] = true; });
+    } catch (e) {}
     grid.querySelectorAll('input[name="network_metrics"]').forEach(function(cb) {
         if (cb.checked) saved[cb.value] = true;
     });
     section.style.display = 'block';
     grid.innerHTML = '';
-    grid.appendChild(function() {
-        var d = document.createElement('div'); d.className = 'header'; d.textContent = 'Interface'; return d;
-    }());
-    NETWORK_METRICS.forEach(function(m) {
-        var d = document.createElement('div'); d.className = 'header'; d.textContent = m.label; grid.appendChild(d);
+    var corner = document.createElement('div');
+    corner.className = 'header corner-head';
+    var ct = document.createElement('div');
+    ct.className = 'cpu-corner-title';
+    ct.textContent = 'Iface';
+    corner.appendChild(ct);
+    var ml = document.createElement('label');
+    ml.className = 'checkbox-label cpu-master-all';
+    var mcb = document.createElement('input');
+    mcb.type = 'checkbox';
+    mcb.id = 'network_matrix_select_all';
+    mcb.title = 'Select or clear every metric for every selected interface';
+    mcb.addEventListener('change', function() {
+        mcb.indeterminate = false;
+        setAllNetworkMetricCells(mcb.checked);
     });
+    ml.appendChild(mcb);
+    ml.appendChild(document.createTextNode(' All'));
+    corner.appendChild(ml);
+    grid.appendChild(corner);
+    NETWORK_METRICS.forEach(function(m) {
+        var d = document.createElement('div');
+        d.className = 'header metric-head';
+        var sp = document.createElement('span');
+        sp.textContent = m.label;
+        d.appendChild(sp);
+        var btns = document.createElement('div');
+        btns.className = 'metric-head-btns';
+        var bp = document.createElement('button');
+        bp.type = 'button';
+        bp.className = 'btn-tiny';
+        bp.textContent = '+';
+        bp.title = 'Select this metric for every selected interface';
+        bp.addEventListener('click', function() { setNetworkMetricColumn(m.id, true); });
+        var bm = document.createElement('button');
+        bm.type = 'button';
+        bm.className = 'btn-tiny';
+        bm.textContent = '−';
+        bm.title = 'Clear this metric for every selected interface';
+        bm.addEventListener('click', function() { setNetworkMetricColumn(m.id, false); });
+        btns.appendChild(bp);
+        btns.appendChild(bm);
+        d.appendChild(btns);
+        grid.appendChild(d);
+    });
+    selected.sort();
     selected.forEach(function(iface) {
-        var lb = document.createElement('div'); lb.className = 'row-label'; lb.textContent = iface; grid.appendChild(lb);
+        var lb = document.createElement('div');
+        lb.className = 'row-label';
+        lb.textContent = iface;
+        grid.appendChild(lb);
         NETWORK_METRICS.forEach(function(m) {
             var val = iface + '::' + m.id;
             var label = document.createElement('label');
@@ -367,49 +850,92 @@ function buildNetworkMetricsGrid() {
             grid.appendChild(label);
         });
     });
+    syncNetworkMatrixMasterCheckbox();
 }
 
 document.getElementById('iface_select')?.addEventListener('change', buildNetworkMetricsGrid);
+document.getElementById('iface_filter')?.addEventListener('input', applyIfaceFilter);
+document.getElementById('iface_sel_all')?.addEventListener('click', function() {
+    var s = document.getElementById('iface_select');
+    if (!s) return;
+    Array.from(s.options).forEach(function(o) { o.selected = true; });
+    buildNetworkMetricsGrid();
+});
+document.getElementById('iface_sel_visible')?.addEventListener('click', function() {
+    var s = document.getElementById('iface_select');
+    if (!s) return;
+    Array.from(s.options).forEach(function(o) { if (!o.hidden) o.selected = true; });
+    buildNetworkMetricsGrid();
+});
+document.getElementById('iface_sel_clear')?.addEventListener('click', function() {
+    var s = document.getElementById('iface_select');
+    if (!s) return;
+    Array.from(s.options).forEach(function(o) { o.selected = false; });
+    buildNetworkMetricsGrid();
+});
+document.getElementById('network_metrics_section')?.addEventListener('change', function(e) {
+    if (e.target && e.target.name === 'network_metrics') syncNetworkMatrixMasterCheckbox();
+});
 if (document.getElementById('iface_select')) {
+    applyIfaceFilter();
     buildNetworkMetricsGrid();
 }
+
+document.getElementById('sar_file_select')?.addEventListener('change', function() {
+    var v = this.value;
+    var base = window.location.pathname || '/';
+    if (!v) {
+        window.location.href = base;
+        return;
+    }
+    var tzEl = document.querySelector('select[name="timezone"]');
+    var tq = tzEl && tzEl.value ? '&timezone=' + encodeURIComponent(tzEl.value) : '';
+    window.location.href = base + '?preview_file=' + encodeURIComponent(v) + tq;
+});
 </script>
 
-{% if cpu_graph or mem_graph or disk_graph or net_graph or net_err_graph %}
+{% if cpu_graph or mem_graph or disk_graph or net_graph or net_err_graph or sock_graph %}
 <hr style="border-color: rgba(255,255,255,0.1); margin: 2rem 0;">
 
 {% if cpu_graph %}
 <div class="graph-section">
-    <h3>CPU Usage</h3>
+    <h3>{{ graph_labels.cpu }}</h3>
     <div class="graph-wrapper">{{ cpu_graph|safe }}</div>
 </div>
 {% endif %}
 
 {% if mem_graph %}
 <div class="graph-section">
-    <h3>Memory Usage</h3>
+    <h3>{{ graph_labels.memory }}</h3>
     <div class="graph-wrapper">{{ mem_graph|safe }}</div>
 </div>
 {% endif %}
 
 {% if disk_graph %}
 <div class="graph-section">
-    <h3>Disk (Latency &amp; Util %)</h3>
+    <h3>{{ graph_labels.disk }}</h3>
     <div class="graph-wrapper">{{ disk_graph|safe }}</div>
 </div>
 {% endif %}
 
 {% if net_graph %}
 <div class="graph-section">
-    <h3>Network (sar -n DEV)</h3>
+    <h3>{{ graph_labels.network }}</h3>
     <div class="graph-wrapper">{{ net_graph|safe }}</div>
 </div>
 {% endif %}
 
 {% if net_err_graph %}
 <div class="graph-section">
-    <h3>Network Errors (sar -n EDEV)</h3>
+    <h3>{{ graph_labels.network_errors }}</h3>
     <div class="graph-wrapper">{{ net_err_graph|safe }}</div>
+</div>
+{% endif %}
+
+{% if sock_graph %}
+<div class="graph-section">
+    <h3>{{ graph_labels.sockets }}</h3>
+    <div class="graph-wrapper">{{ sock_graph|safe }}</div>
 </div>
 {% endif %}
 
