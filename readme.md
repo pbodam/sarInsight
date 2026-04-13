@@ -1,4 +1,4 @@
-# sarInsight
+# sarInsight 
 
 **sarInsight** visualizes Linux `sar` (sysstat) binary archive files. It parses SAR data with the system `sar` command and plots CPU, memory, disk, network, socket, and process metrics.
 
