@@ -1,24 +1,44 @@
 import os
-import pandas as pd
-from flask import Flask, render_template, request
+import secrets
+import sys
 
-from cpu_module import get_cpu_data
+import pandas as pd
+from flask import Flask, redirect, render_template, request, session, url_for
+from werkzeug.utils import secure_filename
+
+# Ensure local modules are importable even when launched from another cwd.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+from cpu_module import get_context_switch_data, get_cpu_data, get_load_queue_data
 from memory_module import get_memory_data
+from memory_swap_in_out import get_swap_io_data
 from disk_module import get_disk_data
 from network_module import get_network_data
 from network_edev_module import get_network_edev_data
-from socket_info import get_socket_info_data
-from total_process_count import get_total_process_count_data
+from socket_module import get_socket_data
 from sar_parser import get_hostname
+from sar_plot_utils import (
+    DEFAULT_INITIAL_WINDOW_SEC,
+    coerce_time_column,
+    finalize_sar_figure_html,
+    initial_x_range_from_series,
+    pick_anchor_time_series,
+)
 
 import plotly.express as px
 import plotly.graph_objects as go
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SA_FOLDER = os.path.join(BASE_DIR, "sa")
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "_sar_uploads")
+# Sar binaries can be large; adjust if needed (bytes).
+MAX_SAR_UPLOAD_BYTES = 256 * 1024 * 1024
 
 app = Flask(__name__)
 app.config["SA_FOLDER"] = SA_FOLDER
+app.config["MAX_CONTENT_LENGTH"] = MAX_SAR_UPLOAD_BYTES
+app.secret_key = os.environ.get("SARINSIGHT_SECRET_KEY") or "sarinsight-dev-secret-change-for-production"
 
 
 def _ensure_sa_folder():
@@ -32,10 +52,218 @@ def _get_sa_files():
     except OSError:
         return []
 
+def _ensure_upload_folder():
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-GRAPH_OPTIONS = ["cpu", "memory", "disk", "network", "network_edev", "socket", "total_process_count"]
+
+def _remove_path_quiet(path):
+    try:
+        if path and os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        pass
 
 
+def _resolve_sar_path_for_request():
+    """
+    Returns (absolute_path_or_none, error_message_or_none).
+    Priority: new upload > session copy > file in sa/ (GET preview only uses sa path elsewhere).
+    """
+    _ensure_upload_folder()
+    up = request.files.get("sar_file")
+    if up and up.filename:
+        safe = secure_filename(up.filename) or "sar_data"
+        dest = os.path.join(UPLOAD_FOLDER, f"{secrets.token_hex(8)}_{safe}")
+        up.save(dest)
+        old = session.get("sar_active_path")
+        if old and old != dest and str(old).startswith(UPLOAD_FOLDER):
+            _remove_path_quiet(old)
+        session["sar_active_path"] = dest
+        session["sar_display_name"] = up.filename
+        return dest, None
+
+    p = session.get("sar_active_path")
+    if p and os.path.isfile(p):
+        return p, None
+
+    return None, None
+
+
+GRAPH_OPTIONS = [
+    "cpu",
+    "load_avg",
+    "context_switches",
+    "memory",
+    "swap_io",
+    "disk",
+    "network",
+    "network_errors",
+    "sockets",
+]
+
+# Shown in the form, page section headings, and Plotly chart titles.
+GRAPH_LABELS = {
+    "cpu": "CPU utilization",
+    "load_avg": "Run queue & load average",
+    "context_switches": "Task / context switching",
+    "memory": "Memory usage",
+    "swap_io": "Swap in / out",
+    "disk": "Disk latency and utilization",
+    "network": "Network throughput",
+    "network_errors": "Network errors and drops",
+    "sockets": "Socket usage",
+}
+
+CPU_METRIC_COLS = ("user", "system", "iowait", "steal", "idle", "total")
+CPU_LEGEND_LABELS = {
+    "user": "User time (%)",
+    "system": "System time (%)",
+    "iowait": "I/O wait (%)",
+    "steal": "Steal (%)",
+    "idle": "Idle (%)",
+    "total": "Total non-idle (%)",
+}
+
+DISK_METRIC_COLS = ("areq_sz", "aqu_sz", "await", "util")
+DISK_LEGEND_LABELS = {
+    "areq_sz": "Average request size",
+    "aqu_sz": "Average queue size",
+    "await": "Average wait (ms)",
+    "util": "Utilization (%)",
+}
+
+NETWORK_METRIC_COLS = (
+    "rxpck_s",
+    "txpck_s",
+    "rxkB_s",
+    "txkB_s",
+    "rxcmp_s",
+    "txcmp_s",
+    "rxmcst_s",
+    "ifutil",
+)
+NETWORK_LEGEND_LABELS = {
+    "rxpck_s": "RX packets/s",
+    "txpck_s": "TX packets/s",
+    "rxkB_s": "Receive KB/s",
+    "txkB_s": "Transmit KB/s",
+    "rxcmp_s": "RX compressed/s",
+    "txcmp_s": "TX compressed/s",
+    "rxmcst_s": "RX multicast/s",
+    "ifutil": "Interface utilization (%)",
+}
+
+EDEV_LEGEND_LABELS = {
+    "rxerr_s": "RX errors/s",
+    "txerr_s": "TX errors/s",
+    "coll_s": "Collisions/s",
+    "rxdrop_s": "RX drops/s",
+    "txdrop_s": "TX drops/s",
+    "txcarr_s": "TX carrier errors/s",
+    "rxfram_s": "RX frame errors/s",
+    "rxfifo_s": "RX FIFO overruns/s",
+    "txfifo_s": "TX FIFO overruns/s",
+}
+
+SOCKET_LEGEND_LABELS = {
+    "totsck": "Total sockets",
+    "tcpsck": "TCP in use",
+    "udpsck": "UDP in use",
+    "rawsck": "RAW sockets",
+    "ip_frag": "IP fragments in use",
+    "tcp_tw": "TCP TIME-WAIT",
+}
+
+MEM_LEGEND_LABELS = {
+    "kbmemfree": "Free memory (MB)",
+    "kbmemused": "Used memory (MB)",
+    "kbbuffers": "Buffers (MB)",
+    "kbcached": "Cached (MB)",
+}
+
+SWAP_IO_LEGEND_LABELS = {
+    "pswpin_s": "Swap in (pages/s)",
+    "pswpout_s": "Swap out (pages/s)",
+}
+
+LOAD_QUEUE_LEGEND_LABELS = {
+    "runq_sz": "Run queue length",
+    "plist_sz": "Process list size",
+    "ldavg_1": "Load average (1 min)",
+    "ldavg_5": "Load average (5 min)",
+    "ldavg_15": "Load average (15 min)",
+}
+
+CONTEXT_SWITCH_LEGEND_LABELS = {
+    "proc_s": "Processes created/s",
+    "cswch_s": "Context switches/s",
+}
+
+
+def _load_sa_data(path: str, tz: str):
+    """Load CPU, disk, and network frames plus unique ids for filter UI (best-effort)."""
+
+    try:
+        cpu = get_cpu_data(path, "UTC", tz)
+    except Exception:
+        cpu = None
+    try:
+        disk = get_disk_data(path, "UTC", tz)
+    except Exception:
+        disk = None
+    try:
+        net = get_network_data(path, "UTC", tz)
+    except Exception:
+        net = None
+
+    cpu_list, disk_list, iface_list = [], [], []
+    if cpu is not None and not cpu.empty and "cpu" in cpu.columns:
+        cpu_list = sorted(cpu["cpu"].unique().tolist(), key=lambda x: (x == "all", x))
+    if disk is not None and "device" in disk.columns and not disk.empty:
+        disk_list = sorted(disk["device"].dropna().astype(str).unique().tolist())
+    if net is not None and "iface" in net.columns and not net.empty:
+        iface_list = sorted(net["iface"].dropna().astype(str).unique().tolist())
+
+    return cpu, disk, net, cpu_list, disk_list, iface_list
+
+
+def _prefetch_graph_datasets(path: str, tz: str, selected_graphs: list) -> dict:
+    """Run optional ``sar`` parsers for selected graphs (one subprocess each, sequential)."""
+    sg = set(selected_graphs)
+    out: dict = {}
+    if "load_avg" in sg:
+        try:
+            out["load_queue"] = get_load_queue_data(path, "UTC", tz)
+        except Exception:
+            out["load_queue"] = None
+    if "context_switches" in sg:
+        try:
+            out["context"] = get_context_switch_data(path, "UTC", tz)
+        except Exception:
+            out["context"] = None
+    if "memory" in sg:
+        try:
+            out["memory"] = get_memory_data(path, "UTC", tz)
+        except Exception:
+            out["memory"] = None
+    if "swap_io" in sg:
+        try:
+            out["swap_io"] = get_swap_io_data(path, "UTC", tz)
+        except Exception:
+            out["swap_io"] = None
+    if "network_errors" in sg:
+        try:
+            out["edev"] = get_network_edev_data(path, "UTC", tz)
+        except Exception:
+            out["edev"] = None
+    if "sockets" in sg:
+        try:
+            out["socket"] = get_socket_data(path, "UTC", tz)
+        except Exception:
+            out["socket"] = None
+    return out
+
+  
 def _add_cpu_dropdown(fig, cpu_list):
     """Add dropdown to CPU graph to filter by CPU. Traces are grouped by legendgroup (cpu)."""
     n = len(fig.data)
@@ -67,388 +295,467 @@ def _add_cpu_dropdown(fig, cpu_list):
     )
 
 
+def _tabular_sar_line_html(df, metric_cols, title, legend_map, yaxis_title, x_range=None):
+    """Plotly line chart for generic SAR tabular frames (time + numeric columns)."""
+    if df is None or df.empty:
+        return None
+    cols = [c for c in metric_cols if c in df.columns]
+    if not cols:
+        return None
+    df = coerce_time_column(df)
+    fig = px.line(
+        df,
+        x="time",
+        y=cols,
+        title=title,
+        labels={c: legend_map.get(c, c) for c in cols},
+    )
+    fig.update_layout(
+        xaxis_title="Time",
+        yaxis_title=yaxis_title,
+        legend=dict(title="Series", font=dict(size=11)),
+    )
+    return finalize_sar_figure_html(fig, x_range)
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     cpu_graph = None
+    load_queue_graph = None
+    context_switch_graph = None
     mem_graph = None
+    swap_io_graph = None
     disk_graph = None
     net_graph = None
     net_err_graph = None
-    socket_graph = None
-    process_graph = None
+    sock_graph = None
     error_message = None
     hostname = ""
     cpu_list = []
-    iface_list = []
     disk_list = []
+    iface_list = []
     selected_graphs = list(GRAPH_OPTIONS)
     selected_cpus = ["all"]
-    selected_ifaces = []
     selected_disks = []
+    selected_ifaces = []
+    selected_cpu_metrics = []
+    selected_disk_metrics = []
+    selected_network_metrics = []
+    timezone = "UTC"
+    active_sar_name = session.get("sar_display_name")
 
     sa_files = sorted(_get_sa_files())
 
-    tz = "UTC"
-    selected = None
+    if request.method == "GET":
+        if request.args.get("clear_sar") == "1":
+            old = session.pop("sar_active_path", None)
+            session.pop("sar_display_name", None)
+            if old and str(old).startswith(UPLOAD_FOLDER):
+                _remove_path_quiet(old)
+            return redirect(url_for("index"))
+
+        preview = request.args.get("preview_file")
+        if preview and preview in sa_files:
+            pp = os.path.join(SA_FOLDER, preview)
+            if os.path.isfile(pp):
+                old = session.get("sar_active_path")
+                if old and str(old).startswith(UPLOAD_FOLDER) and os.path.isfile(old):
+                    _remove_path_quiet(old)
+                session["sar_active_path"] = pp
+                session["sar_display_name"] = preview
+
+        path_prev = session.get("sar_active_path")
+        if path_prev and os.path.isfile(path_prev):
+            timezone = request.args.get("timezone", "UTC")
+            active_sar_name = session.get("sar_display_name")
+            try:
+                hostname = get_hostname(path_prev) or "(unknown)"
+            except Exception:
+                hostname = ""
+            try:
+                _, _, _, cpu_list, disk_list, iface_list = _load_sa_data(path_prev, timezone)
+            except Exception:
+                cpu_list, disk_list, iface_list = [], [], []
+        else:
+            session.pop("sar_active_path", None)
+            session.pop("sar_display_name", None)
+            active_sar_name = None
+
     if request.method == "POST":
-        tz = request.form.get("timezone") or "UTC"
+        tz = request.form.get("timezone", "UTC")
+        timezone = tz
         selected_graphs = request.form.getlist("graphs") or list(GRAPH_OPTIONS)
         selected_cpus = request.form.getlist("cpus")
-        selected_ifaces = request.form.getlist("ifaces")
+        selected_cpu_metrics = request.form.getlist("cpu_metrics")
         selected_disks = request.form.getlist("disks")
-        network_metrics = request.form.getlist("network_metrics")  # e.g. ["bond0::rxpck_s", "vlan100::txkB_s"]
-        disk_metrics = request.form.getlist("disk_metrics")  # e.g. ["sda::await", "sdb::util"]
-        cpu_metrics = request.form.getlist("cpu_metrics")  # e.g. ["79_system", "20_iowait"]
+        selected_ifaces = request.form.getlist("ifaces")
+        selected_disk_metrics = request.form.getlist("disk_metrics")
+        selected_network_metrics = request.form.getlist("network_metrics")
 
-        selected = request.form.get("selected_file")
-        path = os.path.join(SA_FOLDER, selected) if selected and selected in sa_files else None
+        path, _upload_err = _resolve_sar_path_for_request()
+        active_sar_name = session.get("sar_display_name")
+
+        if not path:
+            session.pop("sar_active_path", None)
+            session.pop("sar_display_name", None)
+            active_sar_name = None
+            error_message = "Please choose a file, then click Analyze."
 
         if path and os.path.isfile(path):
             try:
                 hostname = get_hostname(path) or "(unknown)"
-                cpu = None
-                if "cpu" in selected_graphs:
-                    cpu = get_cpu_data(path, "UTC", tz)
-                    def _cpu_sort_key(x):
-                        if x == "all":
-                            return (0, 0)
-                        try:
-                            return (1, int(x))
-                        except (ValueError, TypeError):
-                            return (1, float("inf"))
-                    cpu_list = sorted(cpu["cpu"].unique().tolist(), key=_cpu_sort_key)
-                    if not selected_cpus:
-                        selected_cpus = ["all"] if "all" in cpu_list else cpu_list[:1]
+                cpu, disk, net, cpu_list, disk_list, iface_list = _load_sa_data(path, tz)
+                extra = _prefetch_graph_datasets(path, tz, selected_graphs)
+                cpu = coerce_time_column(cpu)
+                disk = coerce_time_column(disk)
+                net = coerce_time_column(net)
+                for _ek in list(extra.keys()):
+                    extra[_ek] = coerce_time_column(extra[_ek])
+                anchor_series = pick_anchor_time_series(cpu, disk, net, extra)
+                anchor_rng = initial_x_range_from_series(
+                    anchor_series, DEFAULT_INITIAL_WINDOW_SEC
+                )
+                if cpu is None:
+                    cpu = pd.DataFrame()
+                if not selected_cpus and cpu_list:
+                    selected_cpus = ["all"] if "all" in cpu_list else cpu_list[:1]
 
-                if "network" in selected_graphs or "network_edev" in selected_graphs:
-                    try:
-                        net_tmp = get_network_data(path, "UTC", tz)
-                        if not net_tmp.empty:
-                            iface_list.extend(sorted(net_tmp["iface"].unique().tolist()))
-                        elif "network_edev" in selected_graphs:
-                            net_edev_tmp = get_network_edev_data(path, "UTC", tz)
-                            if not net_edev_tmp.empty:
-                                iface_list.extend(sorted(net_edev_tmp["iface"].unique().tolist()))
-                    except Exception:
-                        pass
+                if cpu.empty or "cpu" not in cpu.columns:
+                    cpu_df = cpu.copy()
+                else:
+                    cpu_df = (
+                        cpu[cpu["cpu"].isin(selected_cpus)].copy()
+                        if selected_cpus
+                        else cpu.copy()
+                    )
+                if not cpu_df.empty and all(
+                    c in cpu_df.columns for c in ("user", "system", "iowait", "steal")
+                ):
+                    cpu_df["total"] = (
+                        cpu_df["user"]
+                        + cpu_df["system"]
+                        + cpu_df["iowait"]
+                        + cpu_df["steal"]
+                    )
 
-                if not selected_ifaces and iface_list:
-                    selected_ifaces = iface_list[:]  # default: all interfaces
+                if "cpu" in selected_graphs and not cpu_df.empty:
+                    name_map = CPU_LEGEND_LABELS
+                    pairs = []
+                    for key in selected_cpu_metrics:
+                        if "_" not in key:
+                            continue
+                        cpu_key, metric = key.rsplit("_", 1)
+                        if metric in CPU_METRIC_COLS:
+                            pairs.append((cpu_key, metric))
 
-                if "disk" in selected_graphs:
-                    try:
-                        disk_tmp = get_disk_data(path, "UTC", tz)
-                        if not disk_tmp.empty and "device" in disk_tmp.columns:
-                            disk_list.extend(sorted(disk_tmp["device"].unique().tolist()))
-                    except Exception:
-                        pass
-
-                if not selected_disks and disk_list:
-                    selected_disks = disk_list[:]  # default: all disks
-
-                if "cpu" in selected_graphs and cpu is not None and not cpu.empty:
-                    cpu_df = cpu[cpu["cpu"].isin(selected_cpus)] if selected_cpus else cpu
-                    cpu_df = cpu_df.copy()
-                    for col in ["user", "system", "iowait", "steal", "idle"]:
-                        cpu_df[col] = pd.to_numeric(cpu_df[col], errors="coerce").fillna(0)
-                    cpu_df["total"] = cpu_df["user"] + cpu_df["system"] + cpu_df["iowait"] + cpu_df["steal"]
-
-                    if not cpu_df.empty:
-                        name_map = {"user": "%user", "system": "%system", "iowait": "%iowait", "steal": "%steal", "idle": "%idle", "total": "Total"}
-                        # Parse custom CPU+metric selections (e.g. "79_system", "20_iowait")
-                        custom_pairs = []
-                        if cpu_metrics:
-                            for v in cpu_metrics:
-                                if "_" in v:
-                                    cpu_id, metric = v.split("_", 1)
-                                    if metric in name_map and (cpu_id in cpu_df["cpu"].values or str(cpu_id) in cpu_df["cpu"].astype(str).values):
-                                        custom_pairs.append((str(cpu_id), metric))
-
-                        if custom_pairs:
-                            # Plot only the selected CPU+metric combinations
-                            cpu_fig = go.Figure()
-                            seen_cpus = set()
-                            for cpu_id, metric in custom_pairs:
-                                sub = cpu_df[cpu_df["cpu"].astype(str) == str(cpu_id)]
-                                if sub.empty:
-                                    continue
-                                label = f"{name_map[metric]} (CPU {cpu_id})"
-                                cpu_fig.add_trace(go.Scatter(
-                                    x=sub["time"], y=sub[metric],
-                                    name=label, mode="lines",
-                                    legendgroup=str(cpu_id),
-                                    hovertemplate=f"<b>{label}</b><br>Time: %{{x}}<br>Value: %{{y:.2f}}%<extra></extra>",
-                                ))
-                                seen_cpus.add(cpu_id)
-                            if cpu_fig.data:
-                                cpu_fig.update_layout(
-                                    title="CPU Usage (Selected)",
-                                    xaxis_title="Time",
-                                    yaxis_title="Usage %",
-                                    legend=dict(title="Metric", font=dict(size=10)),
+                    cpu_graph = None
+                    if pairs:
+                        cpu_fig = go.Figure()
+                        for cpu_key, metric in pairs:
+                            sub = cpu_df[cpu_df["cpu"] == cpu_key]
+                            if sub.empty:
+                                continue
+                            disp = name_map.get(metric, metric)
+                            trace_name = f"CPU {cpu_key} · {disp}"
+                            cpu_fig.add_trace(
+                                go.Scatter(
+                                    x=sub["time"],
+                                    y=sub[metric],
+                                    mode="lines",
+                                    name=trace_name,
+                                    legendgroup=str(cpu_key),
+                                    hovertemplate=(
+                                        f"<b>{trace_name}</b><br>Time: %{{x}}<br>"
+                                        "Value: %{y:.2f}%<extra></extra>"
+                                    ),
                                 )
-                                if len(seen_cpus) > 1:
-                                    n_traces = len(cpu_fig.data)
-                                    buttons = [dict(label="All", method="restyle", args=[{"visible": [True] * n_traces}])]
-                                    for c in sorted(seen_cpus, key=lambda x: (0 if x == "all" else 1, int(x) if str(x).isdigit() else 0)):
-                                        visible = [getattr(t, "legendgroup", "") == str(c) for t in cpu_fig.data]
-                                        buttons.append(dict(label=f"CPU {c}", method="restyle", args=[{"visible": visible}]))
-                                    cpu_fig.update_layout(
-                                        updatemenus=[dict(buttons=buttons, direction="down", showactive=True, x=1.02, xanchor="left", y=1, yanchor="top")],
-                                        annotations=[dict(text="Filter:", x=1.02, y=1.05, xref="paper", yref="paper", showarrow=False)],
-                                    )
-                                cpu_graph = cpu_fig.to_html(full_html=False)
+                            )
+                        if cpu_fig.data:
+                            leg = dict(title="Series", font=dict(size=10), tracegroupgap=0)
+                            if len(cpu_fig.data) > 24:
+                                leg["font"] = dict(size=8)
+                            cpu_fig.update_layout(
+                                title=GRAPH_LABELS["cpu"],
+                                legend=leg,
+                                yaxis=dict(title="Usage %"),
+                            )
+                            cpu_graph = finalize_sar_figure_html(cpu_fig, anchor_rng)
+
+                    if cpu_graph is None:
+                        if (cpu_df["cpu"] == "all").any():
+                            cpu_plot = cpu_df[cpu_df["cpu"] == "all"].copy()
+                        elif len(cpu_df["cpu"].unique()) == 1:
+                            cpu_plot = cpu_df.copy()
                         else:
-                            # No custom selection: use original behavior
-                            if (cpu_df["cpu"] == "all").any() and len(cpu_df["cpu"].unique()) == 1:
-                                cpu_plot = cpu_df[cpu_df["cpu"] == "all"].copy()
-                            elif len(cpu_df["cpu"].unique()) == 1:
-                                cpu_plot = cpu_df.copy()
-                            else:
-                                cpu_plot = None
-                            if cpu_plot is not None:
-                                cpu_fig = px.line(
-                                    cpu_plot, x="time", y=["user", "system", "iowait", "steal", "idle", "total"],
-                                    title="CPU Usage",
-                                )
-                                cpu_id = cpu_plot["cpu"].iloc[0] if "cpu" in cpu_plot.columns and len(cpu_plot) > 0 else "all"
-                                for t in cpu_fig.data:
-                                    raw = str(t.name or "").lower()
-                                    metric = "Total" if "total" in raw else name_map.get(raw, raw)
-                                    t.name = f"{metric} (CPU {cpu_id})"
-                                    t.hovertemplate = f"<b>{t.name}</b><br>Time: %{{x}}<br>Value: %{{y:.2f}}%<extra></extra>"
-                                cpu_fig.update_layout(
-                                    legend=dict(title="Metric", font=dict(size=11)),
-                                    yaxis=dict(title="Usage %"),
-                                    annotations=[dict(text=f"CPU: {cpu_id}", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, font=dict(size=12))],
-                                )
-                                cpu_graph = cpu_fig.to_html(full_html=False)
-                            else:
-                                # Multiple CPUs: all metrics per CPU
-                                cpu_fig = go.Figure()
-                                metrics = ["user", "system", "iowait", "steal", "idle", "total"]
-                                for c in sorted(cpu_df["cpu"].unique(), key=lambda x: (0 if x == "all" else 1, int(x) if str(x).isdigit() else 0)):
-                                    sub = cpu_df[cpu_df["cpu"] == c]
-                                    for m in metrics:
-                                        label = f"{name_map[m]} (CPU {c})"
-                                        cpu_fig.add_trace(go.Scatter(
-                                            x=sub["time"], y=sub[m],
-                                            name=label, mode="lines",
-                                            legendgroup=str(c),
-                                            hovertemplate=f"<b>{label}</b><br>Time: %{{x}}<br>Value: %{{y:.2f}}%<extra></extra>",
-                                        ))
-                                cpu_fig.update_layout(
-                                    title="CPU Usage (Selected CPUs)",
-                                    xaxis_title="Time",
-                                    yaxis_title="Usage %",
-                                    legend=dict(title="Metric", font=dict(size=10)),
-                                )
-                                selected_cpu_ids = sorted(
-                                    [c for c in cpu_df["cpu"].unique() if c != "all"],
-                                    key=lambda x: int(x) if str(x).isdigit() else 0,
-                                )
-                                if selected_cpu_ids:
-                                    n_traces = len(cpu_fig.data)
-                                    buttons = [dict(label="All CPUs", method="restyle", args=[{"visible": [True] * n_traces}])]
-                                    for c in selected_cpu_ids:
-                                        visible = [getattr(t, "legendgroup", "") == str(c) for t in cpu_fig.data]
-                                        buttons.append(dict(label=f"CPU {c}", method="restyle", args=[{"visible": visible}]))
-                                    cpu_fig.update_layout(
-                                        updatemenus=[dict(buttons=buttons, direction="down", showactive=True, x=1.02, xanchor="left", y=1, yanchor="top")],
-                                        annotations=[dict(text="Filter:", x=1.02, y=1.05, xref="paper", yref="paper", showarrow=False)],
-                                    )
-                                cpu_graph = cpu_fig.to_html(full_html=False)
+                            cpu_plot = cpu_df.groupby("time")[
+                                ["user", "system", "iowait", "steal", "idle"]
+                            ].mean(numeric_only=True).reset_index()
+                            cpu_plot["total"] = (
+                                cpu_plot["user"]
+                                + cpu_plot["system"]
+                                + cpu_plot["iowait"]
+                                + cpu_plot["steal"]
+                            )
+                        cpu_fig = px.line(
+                            cpu_plot,
+                            x="time",
+                            y=["user", "system", "iowait", "steal", "idle", "total"],
+                            title=GRAPH_LABELS["cpu"],
+                        )
+                        for t in cpu_fig.data:
+                            raw = str(t.name or "").lower()
+                            t.name = "Total" if "total" in raw else name_map.get(raw, raw)
+                            t.hovertemplate = (
+                                f"<b>{t.name}</b><br>Time: %{{x}}<br>Value: %{{y:.2f}}%<extra></extra>"
+                            )
+                        cpu_fig.update_layout(
+                            legend=dict(title="Metric", font=dict(size=11)),
+                            yaxis=dict(title="Usage %"),
+                        )
+                        cpu_graph = finalize_sar_figure_html(cpu_fig, anchor_rng)
+
+                if "load_avg" in selected_graphs:
+                    lq = extra.get("load_queue")
+                    load_queue_graph = _tabular_sar_line_html(
+                        lq,
+                        (
+                            "runq_sz",
+                            "plist_sz",
+                            "ldavg_1",
+                            "ldavg_5",
+                            "ldavg_15",
+                        ),
+                        GRAPH_LABELS["load_avg"],
+                        LOAD_QUEUE_LEGEND_LABELS,
+                        "Run queue / load",
+                        anchor_rng,
+                    )
+
+                if "context_switches" in selected_graphs:
+                    cw = extra.get("context")
+                    ctx_cols = tuple(c for c in ("proc_s", "cswch_s") if c in cw.columns) if cw is not None else ()
+                    context_switch_graph = _tabular_sar_line_html(
+                        cw,
+                        ctx_cols,
+                        GRAPH_LABELS["context_switches"],
+                        CONTEXT_SWITCH_LEGEND_LABELS,
+                        "Per second",
+                        anchor_rng,
+                    )
 
                 if "memory" in selected_graphs:
-                    mem = get_memory_data(path, "UTC", tz)
-                    mem_fig = px.line(
-                        mem, x="time", y=["kbmemfree", "kbmemused"],
-                        title="Memory Usage",
+                    mem = extra.get("memory")
+                    mem_cols = []
+                    if mem is not None and not mem.empty:
+                        mem_cols = [
+                            c
+                            for c in ("kbmemfree", "kbmemused", "kbbuffers", "kbcached")
+                            if c in mem.columns
+                        ]
+                    if mem is not None and not mem.empty and mem_cols:
+                        mem = coerce_time_column(mem)
+                        mem_fig = px.line(mem, x="time", y=mem_cols, title=GRAPH_LABELS["memory"])
+                    elif mem is not None and not mem.empty:
+                        mem = coerce_time_column(mem)
+                        mem_fig = px.line(mem, x="time", y="time", title=GRAPH_LABELS["memory"])
+                    else:
+                        mem_fig = None
+                    if mem_fig is not None:
+                        name_map = MEM_LEGEND_LABELS
+                        for t in mem_fig.data:
+                            t.name = name_map.get(str(t.name), str(t.name))
+                        if mem_cols:
+                            mem_fig.update_layout(yaxis_title="Megabytes (MB)")
+                        mem_graph = finalize_sar_figure_html(mem_fig, anchor_rng)
+
+                if "swap_io" in selected_graphs:
+                    swap_df = extra.get("swap_io")
+                    swap_io_graph = _tabular_sar_line_html(
+                        swap_df,
+                        ("pswpin_s", "pswpout_s"),
+                        GRAPH_LABELS["swap_io"],
+                        SWAP_IO_LEGEND_LABELS,
+                        "Pages per second",
+                        anchor_rng,
                     )
-                    mem_name_map = {"kbmemused": "Used", "kbmemfree": "Free"}
-                    for t in mem_fig.data:
-                        t.name = mem_name_map.get(str(t.name), t.name)
-                        t.hovertemplate = f"<b>{t.name}</b><br>Time: %{{x}}<br>Value: %{{y:.2f}}%<extra></extra>"
-                    mem_fig.update_layout(
-                        yaxis=dict(
-                            title="Memory (%)",
-                            ticksuffix="%",
-                        ),
-                        legend=dict(title="Metric"),
-                    )
-                    mem_graph = mem_fig.to_html(full_html=False)
 
-                if "disk" in selected_graphs:
-                    try:
-                        disk = get_disk_data(path, "UTC", tz)
-                        disk_df = disk[disk["device"].isin(selected_disks)] if selected_disks else disk
-                        if not disk_df.empty:
-                            disk_metric_map = {"areq_sz": "areq-sz", "aqu_sz": "aqu-sz", "await": "await", "util": "%util"}
-                            custom_disk = []
-                            if disk_metrics:
-                                for v in disk_metrics:
-                                    if "::" in v:
-                                        dev, metric = v.split("::", 1)
-                                        if metric in disk_metric_map and (dev in disk_df["device"].values or dev in disk_df["device"].astype(str).values):
-                                            if metric in disk_df.columns:
-                                                custom_disk.append((dev, metric))
-
-                            disk_fig = go.Figure()
-                            if custom_disk:
-                                for dev, metric in custom_disk:
-                                    sub = disk_df[disk_df["device"].astype(str) == str(dev)]
-                                    if sub.empty or metric not in sub.columns:
-                                        continue
-                                    label = f"{disk_metric_map.get(metric, metric)} ({dev})"
-                                    disk_fig.add_trace(go.Scatter(
-                                        x=sub["time"], y=sub[metric],
-                                        name=label, mode="lines",
-                                        legendgroup=str(dev),
-                                        hovertemplate=f"<b>{label}</b><br>Time: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>",
-                                    ))
-                            else:
-                                disk_metrics_default = []
-                                if "areq_sz" in disk_df.columns:
-                                    disk_metrics_default.append("areq_sz")
-                                if "aqu_sz" in disk_df.columns:
-                                    disk_metrics_default.append("aqu_sz")
-                                disk_metrics_default.extend(["await", "util"])
-                                disk_metrics_default = [c for c in disk_metrics_default if c in disk_df.columns]
-                                for dev in sorted(disk_df["device"].unique()):
-                                    sub = disk_df[disk_df["device"] == dev]
-                                    for m in disk_metrics_default:
-                                        label = f"{disk_metric_map.get(m, m)} ({dev})"
-                                        disk_fig.add_trace(go.Scatter(
-                                            x=sub["time"], y=sub[m],
-                                            name=label, mode="lines",
-                                            legendgroup=str(dev),
-                                            hovertemplate=f"<b>{label}</b><br>Time: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>",
-                                        ))
-                            if disk_fig.data:
-                                disk_fig.update_layout(
-                                    title="Disk (sar -d)",
-                                    xaxis_title="Time",
-                                    yaxis_title="Value",
-                                    legend=dict(title="Device", font=dict(size=10)),
+                if "disk" in selected_graphs and disk is not None and not disk.empty:
+                    disk_df = disk.copy()
+                    disk_df["device"] = disk_df["device"].astype(str)
+                    if selected_disks:
+                        disk_df = disk_df[disk_df["device"].isin(selected_disks)]
+                    dnmap = DISK_LEGEND_LABELS
+                    pairs_d = []
+                    for key in selected_disk_metrics:
+                        if "::" not in key:
+                            continue
+                        dev, metric = key.split("::", 1)
+                        if metric in DISK_METRIC_COLS and metric in disk_df.columns:
+                            pairs_d.append((dev, metric))
+                    if pairs_d:
+                        disk_fig = go.Figure()
+                        for dev, metric in pairs_d:
+                            sub = disk_df[disk_df["device"] == dev]
+                            if sub.empty:
+                                continue
+                            nm = f"{dev} · {dnmap.get(metric, metric)}"
+                            disk_fig.add_trace(
+                                go.Scatter(
+                                    x=sub["time"],
+                                    y=sub[metric],
+                                    mode="lines",
+                                    name=nm,
+                                    legendgroup=dev,
+                                    hovertemplate=f"<b>{nm}</b><br>Time: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>",
                                 )
-                                disks_in_fig = sorted(disk_df["device"].unique())
-                                if len(disks_in_fig) > 1:
-                                    n_traces = len(disk_fig.data)
-                                    buttons = [dict(label="All", method="restyle", args=[{"visible": [True] * n_traces}])]
-                                    for d in disks_in_fig:
-                                        visible = [getattr(t, "legendgroup", "") == str(d) for t in disk_fig.data]
-                                        buttons.append(dict(label=d, method="restyle", args=[{"visible": visible}]))
-                                    disk_fig.update_layout(
-                                        updatemenus=[dict(buttons=buttons, direction="down", showactive=True, x=1.02, xanchor="left", y=1, yanchor="top")],
-                                        annotations=[dict(text="Filter:", x=1.02, y=1.05, xref="paper", yref="paper", showarrow=False)],
-                                    )
-                                disk_graph = disk_fig.to_html(full_html=False)
-                    except Exception:
-                        pass
+                            )
+                        if disk_fig.data:
+                            disk_fig.update_layout(
+                                title=GRAPH_LABELS["disk"],
+                                legend=dict(title="Series", font=dict(size=10), tracegroupgap=0),
+                            )
+                            disk_graph = finalize_sar_figure_html(disk_fig, anchor_rng)
+                    if disk_graph is None and not disk_df.empty:
+                        ycols = [c for c in ("await", "util") if c in disk_df.columns]
+                        if ycols:
+                            disk_fig = px.line(
+                                disk_df,
+                                x="time",
+                                y=ycols,
+                                color="device",
+                                title=GRAPH_LABELS["disk"],
+                                labels={c: DISK_LEGEND_LABELS.get(c, c) for c in ycols},
+                            )
+                            disk_graph = finalize_sar_figure_html(disk_fig, anchor_rng)
 
-                if "network" in selected_graphs:
-                    try:
-                        net = get_network_data(path, "UTC", tz)
-                        net_df = net[net["iface"].isin(selected_ifaces)] if selected_ifaces else net
-                        if not net_df.empty:
-                            net_metric_map = {"rxpck_s": "rxpck/s", "txpck_s": "txpck/s", "rxkB_s": "rxkB/s", "txkB_s": "txkB/s", "rxcmp_s": "rxcmp/s", "txcmp_s": "txcmp/s", "rxmcst_s": "rxmcst/s", "ifutil": "%ifutil"}
-                            custom_net = []
-                            if network_metrics:
-                                for v in network_metrics:
-                                    if "::" in v:
-                                        iface, metric = v.split("::", 1)
-                                        if metric in net_metric_map and (iface in net_df["iface"].values or iface in net_df["iface"].astype(str).values):
-                                            custom_net.append((iface, metric))
-
-                            net_fig = go.Figure()
-                            if custom_net:
-                                for iface, metric in custom_net:
-                                    sub = net_df[net_df["iface"].astype(str) == str(iface)]
-                                    if sub.empty or metric not in sub.columns:
-                                        continue
-                                    label = f"{net_metric_map.get(metric, metric)} ({iface})"
-                                    net_fig.add_trace(go.Scatter(
-                                        x=sub["time"], y=sub[metric],
-                                        name=label, mode="lines",
-                                        legendgroup=str(iface),
-                                        hovertemplate=f"<b>{label}</b><br>Time: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>",
-                                    ))
-                            else:
-                                net_metrics_default = ["rxpck_s", "txpck_s", "rxkB_s", "txkB_s", "ifutil"]
-                                for iface in sorted(net_df["iface"].unique()):
-                                    sub = net_df[net_df["iface"] == iface]
-                                    for m in net_metrics_default:
-                                        if m in sub.columns:
-                                            label = f"{net_metric_map.get(m, m)} ({iface})"
-                                            net_fig.add_trace(go.Scatter(
-                                                x=sub["time"], y=sub[m],
-                                                name=label, mode="lines",
-                                                legendgroup=str(iface),
-                                                hovertemplate=f"<b>{label}</b><br>Time: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>",
-                                            ))
-                            if net_fig.data:
-                                net_fig.update_layout(
-                                    title="Network (sar -n DEV)",
-                                    xaxis_title="Time",
-                                    yaxis_title="Value",
-                                    legend=dict(title="Interface", font=dict(size=10)),
+                if "network" in selected_graphs and net is not None and not net.empty:
+                    net_df = net.copy()
+                    net_df["iface"] = net_df["iface"].astype(str)
+                    if selected_ifaces:
+                        net_df = net_df[net_df["iface"].isin(selected_ifaces)]
+                    nnmap = NETWORK_LEGEND_LABELS
+                    pairs_n = []
+                    for key in selected_network_metrics:
+                        if "::" not in key:
+                            continue
+                        iface, metric = key.split("::", 1)
+                        if metric in NETWORK_METRIC_COLS and metric in net_df.columns:
+                            pairs_n.append((iface, metric))
+                    if pairs_n:
+                        net_fig = go.Figure()
+                        for iface, metric in pairs_n:
+                            sub = net_df[net_df["iface"] == iface]
+                            if sub.empty:
+                                continue
+                            disp = nnmap.get(metric, metric)
+                            nm = f"{iface} · {disp}"
+                            net_fig.add_trace(
+                                go.Scatter(
+                                    x=sub["time"],
+                                    y=sub[metric],
+                                    mode="lines",
+                                    name=nm,
+                                    legendgroup=iface,
+                                    hovertemplate=f"<b>{nm}</b><br>Time: %{{x}}<br>Value: %{{y:.4g}}<extra></extra>",
                                 )
-                                ifaces_in_net = sorted(net_df["iface"].unique())
-                                if len(ifaces_in_net) > 1:
-                                    n_traces = len(net_fig.data)
-                                    buttons = [dict(label="All", method="restyle", args=[{"visible": [True] * n_traces}])]
-                                    for i in ifaces_in_net:
-                                        visible = [getattr(t, "legendgroup", "") == str(i) for t in net_fig.data]
-                                        buttons.append(dict(label=i, method="restyle", args=[{"visible": visible}]))
-                                    net_fig.update_layout(
-                                        updatemenus=[dict(buttons=buttons, direction="down", showactive=True, x=1.02, xanchor="left", y=1, yanchor="top")],
-                                        annotations=[dict(text="Filter:", x=1.02, y=1.05, xref="paper", yref="paper", showarrow=False)],
-                                    )
-                                net_graph = net_fig.to_html(full_html=False)
-                    except Exception:
-                        pass
+                            )
+                        if net_fig.data:
+                            net_fig.update_layout(
+                                title=GRAPH_LABELS["network"],
+                                legend=dict(title="Series", font=dict(size=10), tracegroupgap=0),
+                            )
+                            net_graph = finalize_sar_figure_html(net_fig, anchor_rng)
+                    if net_graph is None and not net_df.empty:
+                        ycols = [c for c in ("rxpck_s", "txpck_s") if c in net_df.columns]
+                        if ycols:
+                            net_fig = px.line(
+                                net_df,
+                                x="time",
+                                y=ycols,
+                                color="iface",
+                                title=GRAPH_LABELS["network"],
+                                labels={c: NETWORK_LEGEND_LABELS.get(c, c) for c in ycols},
+                            )
+                            net_graph = finalize_sar_figure_html(net_fig, anchor_rng)
 
-                if "network_edev" in selected_graphs:
-                    try:
-                        net_edev = get_network_edev_data(path, "UTC", tz)
-                        net_edev_df = net_edev[net_edev["iface"].isin(selected_ifaces)] if selected_ifaces else net_edev
-                        if not net_edev_df.empty:
-                            edev_metric_map = {"rxerr_s": "rxerr/s", "txerr_s": "txerr/s", "coll_s": "coll/s", "rxdrop_s": "rxdrop/s", "txdrop_s": "txdrop/s", "txcarr_s": "txcarr/s", "rxfram_s": "rxfram/s", "rxfifo_s": "rxfifo/s", "txfifo_s": "txfifo/s"}
-                            edev_metrics_default = ["rxerr_s", "txerr_s", "rxdrop_s", "txdrop_s", "rxfram_s", "rxfifo_s", "txfifo_s"]
-                            edev_metrics_default = [c for c in edev_metrics_default if c in net_edev_df.columns]
-                            if edev_metrics_default:
-                                net_err_fig = go.Figure()
-                                for iface in sorted(net_edev_df["iface"].unique()):
-                                    sub = net_edev_df[net_edev_df["iface"] == iface]
-                                    for m in edev_metrics_default:
-                                        label = f"{edev_metric_map.get(m, m)} ({iface})"
-                                        net_err_fig.add_trace(go.Scatter(
-                                            x=sub["time"], y=sub[m],
-                                            name=label, mode="lines",
-                                            legendgroup=str(iface),
-                                            hovertemplate=f"<b>{label}</b><br>Time: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>",
-                                        ))
-                                if net_err_fig.data:
-                                    net_err_fig.update_layout(
-                                        title="Network Errors (sar -n EDEV)",
-                                        xaxis_title="Time",
-                                        yaxis_title="Value",
-                                        legend=dict(title="Interface", font=dict(size=10)),
-                                    )
-                                    ifaces_in_edev = sorted(net_edev_df["iface"].unique())
-                                    if len(ifaces_in_edev) > 1:
-                                        n_traces = len(net_err_fig.data)
-                                        buttons = [dict(label="All", method="restyle", args=[{"visible": [True] * n_traces}])]
-                                        for i in ifaces_in_edev:
-                                            visible = [getattr(t, "legendgroup", "") == str(i) for t in net_err_fig.data]
-                                            buttons.append(dict(label=i, method="restyle", args=[{"visible": visible}]))
-                                        net_err_fig.update_layout(
-                                            updatemenus=[dict(buttons=buttons, direction="down", showactive=True, x=1.02, xanchor="left", y=1, yanchor="top")],
-                                            annotations=[dict(text="Filter:", x=1.02, y=1.05, xref="paper", yref="paper", showarrow=False)],
-                                        )
-                                    net_err_graph = net_err_fig.to_html(full_html=False)
-                    except Exception:
-                        pass
+                if "network_errors" in selected_graphs:
+                    edev = extra.get("edev")
+                    if edev is not None and not edev.empty:
+                        edev_df = edev.copy()
+                        edev_df["iface"] = edev_df["iface"].astype(str)
+                        if selected_ifaces:
+                            edev_df = edev_df[edev_df["iface"].isin(selected_ifaces)]
+                        err_cols = [
+                            c
+                            for c in (
+                                "rxerr_s",
+                                "txerr_s",
+                                "coll_s",
+                                "rxdrop_s",
+                                "txdrop_s",
+                                "txcarr_s",
+                                "rxfram_s",
+                                "rxfifo_s",
+                                "txfifo_s",
+                            )
+                            if c in edev_df.columns
+                        ]
+                        if err_cols and not edev_df.empty:
+                            melted = edev_df.melt(
+                                id_vars=["time", "iface"],
+                                value_vars=err_cols[:8],
+                                var_name="metric",
+                                value_name="value",
+                            )
+                            melted["metric_label"] = melted["metric"].map(
+                                lambda m: EDEV_LEGEND_LABELS.get(m, m)
+                            )
+                            melted["series"] = (
+                                melted["iface"].astype(str)
+                                + " · "
+                                + melted["metric_label"].astype(str)
+                            )
+                            net_err_fig = px.line(
+                                melted,
+                                x="time",
+                                y="value",
+                                color="series",
+                                title=GRAPH_LABELS["network_errors"],
+                                labels={
+                                    "series": "Interface · metric",
+                                    "value": "Rate (per second)",
+                                    "time": "Time",
+                                },
+                            )
+                            net_err_graph = finalize_sar_figure_html(net_err_fig, anchor_rng)
+
+                if "sockets" in selected_graphs:
+                    sock = extra.get("socket")
+                    if sock is not None and not sock.empty:
+                        sock_cols = [
+                            c
+                            for c in (
+                                "totsck",
+                                "tcpsck",
+                                "udpsck",
+                                "rawsck",
+                                "ip_frag",
+                                "tcp_tw",
+                            )
+                            if c in sock.columns
+                        ]
+                        if sock_cols:
+                            sock = coerce_time_column(sock)
+                            sock_fig = px.line(
+                                sock,
+                                x="time",
+                                y=sock_cols,
+                                title=GRAPH_LABELS["sockets"],
+                                labels={
+                                    c: SOCKET_LEGEND_LABELS.get(c, c) for c in sock_cols
+                                },
+                            )
+                            sock_graph = finalize_sar_figure_html(sock_fig, anchor_rng)
 
                 if "socket" in selected_graphs:
                     try:
@@ -512,40 +819,34 @@ def index():
 
             except Exception as e:
                 error_message = str(e)
-        else:
-            error_message = "Please select a SAR file from the sa folder."
-    else:
-        selected = None
-
-    selected_cpu_metrics = request.form.getlist("cpu_metrics") if request.method == "POST" else []
-    selected_network_metrics = request.form.getlist("network_metrics") if request.method == "POST" else []
-    selected_disk_metrics = request.form.getlist("disk_metrics") if request.method == "POST" else []
 
     return render_template(
         "index.html",
         cpu_graph=cpu_graph,
+        load_queue_graph=load_queue_graph,
+        context_switch_graph=context_switch_graph,
         mem_graph=mem_graph,
+        swap_io_graph=swap_io_graph,
         disk_graph=disk_graph,
         net_graph=net_graph,
         net_err_graph=net_err_graph,
-        socket_graph=socket_graph,
-        process_graph=process_graph,
-        sa_files=sa_files,
+        sock_graph=sock_graph,
         error_message=error_message,
         hostname=hostname,
         cpu_list=cpu_list,
-        iface_list=iface_list,
         disk_list=disk_list,
+        iface_list=iface_list,
         selected_graphs=selected_graphs,
         selected_cpus=selected_cpus,
-        selected_ifaces=selected_ifaces,
         selected_disks=selected_disks,
-        selected_cpu_metrics=selected_cpu_metrics,
-        selected_network_metrics=selected_network_metrics,
-        selected_disk_metrics=selected_disk_metrics,
+        selected_ifaces=selected_ifaces,
         graph_options=GRAPH_OPTIONS,
-        selected_file=selected if request.method == "POST" else None,
-        timezone=tz,
+        active_sar_name=active_sar_name,
+        timezone=timezone,
+        selected_cpu_metrics=selected_cpu_metrics,
+        selected_disk_metrics=selected_disk_metrics,
+        selected_network_metrics=selected_network_metrics,
+        graph_labels=GRAPH_LABELS,
     )
 
 
