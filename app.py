@@ -2,6 +2,7 @@ import os
 import re
 import secrets
 import sys
+from datetime import datetime
 
 import pandas as pd
 from flask import Flask, redirect, render_template, request, session, url_for
@@ -63,6 +64,47 @@ def _remove_path_quiet(path):
             os.remove(path)
     except OSError:
         pass
+
+
+def _normalize_time_filter(value):
+    if not value:
+        return None
+    value = value.strip()
+    for fmt in ("%H:%M:%S", "%H:%M"):
+        try:
+            return datetime.strptime(value, fmt).strftime("%H:%M:%S")
+        except ValueError:
+            continue
+    return None
+
+
+def _find_time_range(*frames):
+    all_times = []
+    for df in frames:
+        if df is None or df.empty or "time" not in df.columns:
+            continue
+        series = df["time"].dropna()
+        if not series.empty:
+            all_times.append(series)
+    if not all_times:
+        return None, None
+    joint = pd.concat(all_times, ignore_index=True)
+    if joint.empty:
+        return None, None
+    start = pd.to_datetime(joint.min())
+    end = pd.to_datetime(joint.max())
+    return start.strftime("%H:%M:%S"), end.strftime("%H:%M:%S")
+
+
+def _filter_frame_by_time(df, start, end):
+    if df is None or df.empty or "time" not in df.columns:
+        return df
+    out = df
+    if start:
+        out = out[out["time"] >= start]
+    if end:
+        out = out[out["time"] <= end]
+    return out
 
 
 def _resolve_sar_path_for_request():
@@ -344,6 +386,8 @@ def index():
     selected_cpu_metrics = []
     selected_disk_metrics = []
     selected_network_metrics = []
+    time_from = ""
+    time_to = ""
     timezone = "UTC"
     active_sar_name = session.get("sar_display_name")
 
@@ -376,7 +420,15 @@ def index():
             except Exception:
                 hostname = ""
             try:
-                _, _, _, cpu_list, disk_list, iface_list = _load_sa_data(path_prev, timezone)
+                cpu, disk, net, cpu_list, disk_list, iface_list = _load_sa_data(path_prev, timezone)
+                cpu = coerce_time_column(cpu)
+                disk = coerce_time_column(disk)
+                net = coerce_time_column(net)
+                default_start, default_end = _find_time_range(cpu, disk, net)
+                if default_start:
+                    time_from = default_start
+                if default_end:
+                    time_to = default_end
             except Exception:
                 cpu_list, disk_list, iface_list = [], [], []
         else:
@@ -396,6 +448,8 @@ def index():
         selected_network_metrics = request.form.getlist("network_metrics")
         iface_filter = request.form.get("iface_filter", "") or ""
         disk_filter = request.form.get("disk_filter", "") or ""
+        time_from = request.form.get("time_from", "") or ""
+        time_to = request.form.get("time_to", "") or ""
 
         def _parse_filter_text(text):
             values = [v.strip() for v in re.split(r"[;,\s]+", text.strip()) if v.strip()]
@@ -405,6 +459,15 @@ def index():
             selected_ifaces = _parse_filter_text(iface_filter)
         if disk_filter.strip():
             selected_disks = _parse_filter_text(disk_filter)
+
+        norm_from = _normalize_time_filter(time_from)
+        norm_to = _normalize_time_filter(time_to)
+        if time_from and not norm_from:
+            error_message = "Start time must be in HH:MM:SS format."
+        if time_to and not norm_to:
+            error_message = "End time must be in HH:MM:SS format."
+        if norm_from and norm_to and norm_from > norm_to:
+            error_message = "Start time must be before or equal to end time."
 
         path, _upload_err = _resolve_sar_path_for_request()
         active_sar_name = session.get("sar_display_name")
@@ -419,12 +482,31 @@ def index():
             try:
                 hostname = get_hostname(path) or "(unknown)"
                 cpu, disk, net, cpu_list, disk_list, iface_list = _load_sa_data(path, tz)
-                extra = _prefetch_graph_datasets(path, tz, selected_graphs)
                 cpu = coerce_time_column(cpu)
                 disk = coerce_time_column(disk)
                 net = coerce_time_column(net)
+                default_start, default_end = _find_time_range(cpu, disk, net)
+                if not time_from and default_start:
+                    time_from = default_start
+                if not time_to and default_end:
+                    time_to = default_end
+                extra = _prefetch_graph_datasets(path, tz, selected_graphs)
                 for _ek in list(extra.keys()):
                     extra[_ek] = coerce_time_column(extra[_ek])
+                if not time_from and not time_to:
+                    default_start, default_end = _find_time_range(cpu, disk, net, *extra.values())
+                    if default_start:
+                        time_from = default_start
+                    if default_end:
+                        time_to = default_end
+                    norm_from = _normalize_time_filter(time_from)
+                    norm_to = _normalize_time_filter(time_to)
+                if error_message is None and (norm_from or norm_to):
+                    cpu = _filter_frame_by_time(cpu, norm_from, norm_to)
+                    disk = _filter_frame_by_time(disk, norm_from, norm_to)
+                    net = _filter_frame_by_time(net, norm_from, norm_to)
+                    for _ek in list(extra.keys()):
+                        extra[_ek] = _filter_frame_by_time(extra[_ek], norm_from, norm_to)
                 anchor_series = pick_anchor_time_series(cpu, disk, net, extra)
                 anchor_rng = initial_x_range_from_series(
                     anchor_series, DEFAULT_INITIAL_WINDOW_SEC
@@ -802,6 +884,8 @@ def index():
         selected_network_metrics=selected_network_metrics,
         iface_filter=iface_filter,
         disk_filter=disk_filter,
+        time_from=time_from,
+        time_to=time_to,
         graph_labels=GRAPH_LABELS,
     )
 
