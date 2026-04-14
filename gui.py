@@ -61,7 +61,16 @@ class SarInsightGUI(QWidget):
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
         sa_dir = os.path.join(base_dir, "sa")
-        file,_ = QFileDialog.getOpenFileName(self, "Select SAR file", sa_dir )
+        os.makedirs(sa_dir, exist_ok=True)
+
+        options = QFileDialog.Options()
+        file, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open SAR file",
+            sa_dir,
+            "SAR files (*.sar);;All files (*)",
+            options=options,
+        )
 
         if not file:
             return

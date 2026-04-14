@@ -1,4 +1,5 @@
 import os
+import re
 import secrets
 import sys
 
@@ -52,9 +53,9 @@ def _get_sa_files():
     except OSError:
         return []
 
+
 def _ensure_upload_folder():
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
 
 def _remove_path_quiet(path):
     try:
@@ -107,7 +108,7 @@ GRAPH_LABELS = {
     "load_avg": "Run queue & load average",
     "context_switches": "Task / context switching",
     "memory": "Memory usage",
-    "swap_io": "Swap in / out",
+    "swap_io": "Memory Swap in / out",
     "disk": "Disk latency and utilization",
     "network": "Network throughput",
     "network_errors": "Network errors and drops",
@@ -263,7 +264,7 @@ def _prefetch_graph_datasets(path: str, tz: str, selected_graphs: list) -> dict:
             out["socket"] = None
     return out
 
-  
+
 def _add_cpu_dropdown(fig, cpu_list):
     """Add dropdown to CPU graph to filter by CPU. Traces are grouped by legendgroup (cpu)."""
     n = len(fig.data)
@@ -338,6 +339,8 @@ def index():
     selected_cpus = ["all"]
     selected_disks = []
     selected_ifaces = []
+    iface_filter = ""
+    disk_filter = ""
     selected_cpu_metrics = []
     selected_disk_metrics = []
     selected_network_metrics = []
@@ -391,6 +394,17 @@ def index():
         selected_ifaces = request.form.getlist("ifaces")
         selected_disk_metrics = request.form.getlist("disk_metrics")
         selected_network_metrics = request.form.getlist("network_metrics")
+        iface_filter = request.form.get("iface_filter", "") or ""
+        disk_filter = request.form.get("disk_filter", "") or ""
+
+        def _parse_filter_text(text):
+            values = [v.strip() for v in re.split(r"[;,\s]+", text.strip()) if v.strip()]
+            return values
+
+        if iface_filter.strip():
+            selected_ifaces = _parse_filter_text(iface_filter)
+        if disk_filter.strip():
+            selected_disks = _parse_filter_text(disk_filter)
 
         path, _upload_err = _resolve_sar_path_for_request()
         active_sar_name = session.get("sar_display_name")
@@ -757,66 +771,6 @@ def index():
                             )
                             sock_graph = finalize_sar_figure_html(sock_fig, anchor_rng)
 
-                if "socket" in selected_graphs:
-                    try:
-                        sock = get_socket_info_data(path, "UTC", tz)
-                        if not sock.empty:
-                            sock_fig = px.line(
-                                sock,
-                                x="time",
-                                y=["totsck", "tcpsck", "udpsck", "rawsck", "ip_frag", "tcp_tw"],
-                                title="Socket Usage (sar -n SOCK)",
-                            )
-                            name_map = {
-                                "totsck": "totsck",
-                                "tcpsck": "tcpsck",
-                                "udpsck": "udpsck",
-                                "rawsck": "rawsck",
-                                "ip_frag": "ip-frag",
-                                "tcp_tw": "tcp-tw",
-                            }
-                            for t in sock_fig.data:
-                                t.name = name_map.get(str(t.name), t.name)
-                                t.hovertemplate = f"<b>{t.name}</b><br>Time: %{{x}}<br>Value: %{{y:.0f}}<extra></extra>"
-                            sock_fig.update_layout(
-                                xaxis_title="Time",
-                                yaxis_title="Count",
-                                legend=dict(title="Metric"),
-                            )
-                            socket_graph = sock_fig.to_html(full_html=False)
-                    except Exception:
-                        pass
-
-                if "total_process_count" in selected_graphs:
-                    try:
-                        proc = get_total_process_count_data(path, "UTC", tz)
-                        if not proc.empty:
-                            proc_fig = px.line(
-                                proc,
-                                x="time",
-                                y=["runq_sz", "plist_sz", "ldavg_1", "ldavg_5", "ldavg_15", "blocked"],
-                                title="Process Queue and Load (sar -q)",
-                            )
-                            name_map = {
-                                "runq_sz": "runq-sz",
-                                "plist_sz": "plist-sz",
-                                "ldavg_1": "ldavg-1",
-                                "ldavg_5": "ldavg-5",
-                                "ldavg_15": "ldavg-15",
-                                "blocked": "blocked",
-                            }
-                            for t in proc_fig.data:
-                                t.name = name_map.get(str(t.name), t.name)
-                                t.hovertemplate = f"<b>{t.name}</b><br>Time: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>"
-                            proc_fig.update_layout(
-                                xaxis_title="Time",
-                                yaxis_title="Value",
-                                legend=dict(title="Metric"),
-                            )
-                            process_graph = proc_fig.to_html(full_html=False)
-                    except Exception:
-                        pass
-
             except Exception as e:
                 error_message = str(e)
 
@@ -846,6 +800,8 @@ def index():
         selected_cpu_metrics=selected_cpu_metrics,
         selected_disk_metrics=selected_disk_metrics,
         selected_network_metrics=selected_network_metrics,
+        iface_filter=iface_filter,
+        disk_filter=disk_filter,
         graph_labels=GRAPH_LABELS,
     )
 

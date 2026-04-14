@@ -104,6 +104,19 @@
             max-width: 100%;
         }
         .hint { display: block; margin-top: 0.25rem; color: var(--muted); font-size: 0.85rem; }
+        .resource-filter-input {
+            width: 100%;
+            padding: 0.55rem 0.75rem;
+            border: 1px solid rgba(255,255,255,0.12);
+            background: #131a26;
+            color: var(--text);
+            border-radius: 8px;
+            font-size: 0.95rem;
+            margin-bottom: 0.5rem;
+        }
+        .resource-filter-input::placeholder {
+            color: rgba(255,255,255,0.45);
+        }
         .btn-tiny {
             padding: 0.35rem 0.65rem; font-size: 0.82rem; border-radius: 6px;
             border: 1px solid rgba(255,255,255,0.15);
@@ -208,25 +221,27 @@
                 {% if iface_list %}
                 <div class="form-group resource-picker-col" id="wrap_resource_network">
                     <label>Network</label>
+                    <input type="text" name="iface_filter" id="iface_filter" value="{{ iface_filter or '' }}" placeholder="Type interface names, e.g. ens33, bond0" autocomplete="off" class="resource-filter-input">
                     {% set iface_sel_rows = [6, iface_list|length]|min %}
                     <select name="ifaces" id="iface_select" class="resource-multiselect" multiple size="{{ iface_sel_rows }}">
                         {% for i in iface_list %}
                         <option value="{{ i }}" {% if i in selected_ifaces %}selected{% endif %}>{{ i }}</option>
                         {% endfor %}
                     </select>
-                    <small class="hint">Applies to <strong>Network</strong> (DEV) and <strong>Network Errors</strong> (EDEV). Leave none selected to include all interfaces.</small>
+                    <small class="hint">Type comma-separated interface names here to pick them manually, or choose from the list below.</small>
                 </div>
                 {% endif %}
                 {% if disk_list %}
                 <div class="form-group resource-picker-col" id="wrap_resource_disk">
                     <label>Disk</label>
+                    <input type="text" name="disk_filter" id="disk_filter" value="{{ disk_filter or '' }}" placeholder="Type disk names, e.g. sda, sdb" autocomplete="off" class="resource-filter-input">
                     {% set disk_sel_rows = [6, disk_list|length]|min %}
                     <select name="disks" id="disk_select" class="resource-multiselect" multiple size="{{ disk_sel_rows }}">
                         {% for d in disk_list %}
                         <option value="{{ d }}" {% if d in selected_disks %}selected{% endif %}>{{ d }}</option>
                         {% endfor %}
                     </select>
-                    <small class="hint">Empty metric matrix → default await/util.</small>
+                    <small class="hint">Type comma-separated disk names here to pick them manually, or choose from the list below.</small>
                 </div>
                 {% endif %}
             </div>
@@ -753,6 +768,42 @@ function syncGraphDependentUI() {
     buildDiskMetricsGrid();
     buildNetworkMetricsGrid();
 }
+
+function filterOptionsByText(inputId, selectId) {
+    var input = document.getElementById(inputId);
+    var select = document.getElementById(selectId);
+    if (!input || !select) return;
+    var value = input.value.trim().toLowerCase();
+    var tokens = value ? value.split(/[;,\s]+/).filter(function(t) { return t.length > 0; }) : [];
+
+    Array.from(select.options).forEach(function(option) {
+        var text = option.value.toLowerCase();
+        if (!tokens.length) {
+            option.hidden = false;
+            option.disabled = false;
+            option.style.display = '';
+            return;
+        }
+        var match = tokens.some(function(token) {
+            return text.indexOf(token) !== -1;
+        });
+        option.hidden = !match;
+        option.disabled = !match;
+        option.style.display = match ? '' : 'none';
+    });
+}
+
+document.getElementById('iface_filter')?.addEventListener('input', function() {
+    filterOptionsByText('iface_filter', 'iface_select');
+});
+
+document.getElementById('disk_filter')?.addEventListener('input', function() {
+    filterOptionsByText('disk_filter', 'disk_select');
+});
+
+// Apply filter on page load if the inputs already contain text.
+filterOptionsByText('iface_filter', 'iface_select');
+filterOptionsByText('disk_filter', 'disk_select');
 
 syncGraphDependentUI();
 
