@@ -77,6 +77,23 @@
             grid-column: 1 / -1;
         }
         button[type="submit"]:hover { opacity: 0.9; }
+        .button-reset {
+            padding: 0.75rem 1.25rem;
+            background: transparent;
+            color: var(--text);
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            width: auto;
+            min-width: 11rem;
+        }
+        .button-reset:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(88,166,255,0.08);
+        }
         .error { color: #f85149; padding: 0.75rem; background: rgba(248,81,73,0.15); border-radius: 8px; margin-bottom: 1rem; }
         .graph-section { margin: 2rem 0; }
         .graph-section h3 { color: var(--muted); margin-bottom: 0.5rem; font-weight: 500; }
@@ -289,7 +306,10 @@
         {% if error_message %}
         <div class="error">{{ error_message }}</div>
         {% endif %}
-        <button type="submit">Analyze</button>
+        <div style="display:flex; gap:0.75rem; align-items:center; justify-content:space-between; flex-wrap:wrap;">
+            <button type="submit" class="button-primary">Analyze</button>
+            <button type="button" id="reset_zoom_button" class="button-reset">Reset charts</button>
+        </div>
     </div>
 </form>
 <script>
@@ -1039,6 +1059,17 @@ syncGraphDependentUI();
     }
 
     window.addEventListener('load', syncTimeRange);
+    document.getElementById('reset_zoom_button')?.addEventListener('click', function() {
+        if (typeof Plotly === 'undefined') return;
+        var plotIds = collectPlotIds();
+        if (!plotIds.length) return;
+        plotIds.forEach(function(pid) {
+            Plotly.relayout(pid, {
+                'xaxis.autorange': true,
+                'yaxis.autorange': true,
+            });
+        });
+    });
 })();
 </script>
 {% endif %}
