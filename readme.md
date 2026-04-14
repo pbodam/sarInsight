@@ -8,68 +8,39 @@
 
 ## Installation
 
-```bash
-cd sarInsight
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
+There are 2 methods to use this application 
 
-## Web application (recommended)
+1. 
+    ```bash
+    cd sarInsight
+    python -m venv .venv
+    source .venv/bin/activate   # Windows: .venv\Scripts\activate
+    pip install -r requirements.txt
+    ```
+    The Flask app serves interactive Plotly charts and supports multiple SAR files, time zones, and per-metric filters.
 
-The Flask app serves interactive Plotly charts and supports multiple SAR files, time zones, and per-metric filters.
+    ```bash
+    python -c "from app import app; app.run(debug=True)"
+    ```
 
-1. Place one or more SAR archive files in the `sa/` directory at the project root (the app creates `sa/` if missing).
-2. Run:
+    Or set `FLASK_APP=app` and use `flask run` if you prefer.
 
-```bash
-python -c "from app import app; app.run(debug=True)"
-```
-
-Or set `FLASK_APP=app` and use `flask run` if you prefer.
-
-3. Open the URL shown in the terminal (default `http://127.0.0.1:5000` or `http://localhost:5000`).
-
-**Features:**
-
-- Choose a SAR file, display timezone, and which graphs to show: CPU, memory, disk, network, network errors (`network_edev`), sockets, total process count.
-- CPU graphs can filter by CPU id; network and disk views support metric/device selection where applicable.
-
-SAR files are read from the `sa/` directory next to `app.py`. To use another path, change `SA_FOLDER` in `app.py`.
+    Open the URL shown in the terminal (default `http://127.0.0.1:5000` or `http://localhost:5000`).
 
 
-Use **Load SAR File** to pick a SAR file from disk. Choose a display timezone from the combo box.
+2. Docker or Podman
 
-## Docker or Podman
+    Build and run the web app in a container (listens on port 5000):
 
-Build and run the web app in a container (listens on port 5000):
+    ```bash
+    docker build -t sarinsight .
+    docker run -d -p 5000:5000 sarinsight
+    ```
 
-```bash
-docker build -t sarinsight .
-docker run --rm -p 5000:5000 -v /path/to/your/sar/files:/app/sa sarinsight
-```
-
-Mount your SAR archives into `/app/sa` so they appear in the web UI. Override the port with `-e PORT=8080` and map `-p 8080:8080` if needed.
+Choose the port with `-e PORT=8080` and map `-p 8080:8080` if needed.
 
 start with different port:
 ```bash
-podman run --rm -e PORT=8000 -p 8000:8000 -v ./sa:/app/sa  sarinsight
-docker run --rm -e PORT=8000 -p 8000:8000 -v ./sa:/app/sa  sarinsight
+podman run -d -e PORT=8000 -p 8000:8000  sarinsight
+docker run -d -e PORT=8000 -p 8000:8000  sarinsight
 ```
-
-## Project layout
-
-| Component | Role |
-|-----------|------|
-| `app.py` | Flask routes, Plotly figures, HTML templates |
-| `main.py` / `gui.py` | PyQt5 entry point and plots |
-| `sar_parser.py` | Runs `sar` via subprocess, parses lines, hostname and time helpers |
-| `cpu_module.py` | CPU utilization from SAR |
-| `memory_module.py` | Memory statistics |
-| `disk_module.py` | Disk / block device metrics |
-| `network_module.py` | Per-interface network throughput |
-| `network_edev_module.py` | Network errors/drops (edev) |
-| `socket_info.py` | Socket-related SAR data |
-| `total_process_count.py` | Process count time series |
-| `sa/` | Default folder for SAR files (web UI) |
-| `templates/` | Flask HTML templates |

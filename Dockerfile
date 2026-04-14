@@ -18,8 +18,6 @@ RUN pip install --upgrade pip \
 
 COPY . /app
 
-RUN mkdir -p /app/sa
-
 EXPOSE 5000
 
 CMD ["python", "-c", "import os; from app import app; app.run(host='0.0.0.0', port=int(os.getenv('PORT', '5000')))"]
