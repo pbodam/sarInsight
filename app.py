@@ -1,24 +1,44 @@
-from flask import Flask, render_template, request
 import os
+import secrets
+import sys
 
 import pandas as pd
+from flask import Flask, redirect, render_template, request, session, url_for
+from werkzeug.utils import secure_filename
 
-from cpu_module import get_cpu_data
+# Ensure local modules are importable even when launched from another cwd.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+from cpu_module import get_context_switch_data, get_cpu_data, get_load_queue_data
 from memory_module import get_memory_data
+from memory_swap_in_out import get_swap_io_data
 from disk_module import get_disk_data
 from network_module import get_network_data
 from network_edev_module import get_network_edev_data
 from socket_module import get_socket_data
 from sar_parser import get_hostname
+from sar_plot_utils import (
+    DEFAULT_INITIAL_WINDOW_SEC,
+    coerce_time_column,
+    finalize_sar_figure_html,
+    initial_x_range_from_series,
+    pick_anchor_time_series,
+)
 
 import plotly.express as px
 import plotly.graph_objects as go
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SA_FOLDER = os.path.join(BASE_DIR, "sa")
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "_sar_uploads")
+# Sar binaries can be large; adjust if needed (bytes).
+MAX_SAR_UPLOAD_BYTES = 256 * 1024 * 1024
 
 app = Flask(__name__)
 app.config["SA_FOLDER"] = SA_FOLDER
+app.config["MAX_CONTENT_LENGTH"] = MAX_SAR_UPLOAD_BYTES
+app.secret_key = os.environ.get("SARINSIGHT_SECRET_KEY") or "sarinsight-dev-secret-change-for-production"
 
 
 def _ensure_sa_folder():
@@ -33,12 +53,62 @@ def _get_sa_files():
         return []
 
 
-GRAPH_OPTIONS = ["cpu", "memory", "disk", "network", "network_errors", "sockets"]
+def _ensure_upload_folder():
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+
+def _remove_path_quiet(path):
+    try:
+        if path and os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def _resolve_sar_path_for_request():
+    """
+    Returns (absolute_path_or_none, error_message_or_none).
+    Priority: new upload > session copy > file in sa/ (GET preview only uses sa path elsewhere).
+    """
+    _ensure_upload_folder()
+    up = request.files.get("sar_file")
+    if up and up.filename:
+        safe = secure_filename(up.filename) or "sar_data"
+        dest = os.path.join(UPLOAD_FOLDER, f"{secrets.token_hex(8)}_{safe}")
+        up.save(dest)
+        old = session.get("sar_active_path")
+        if old and old != dest and str(old).startswith(UPLOAD_FOLDER):
+            _remove_path_quiet(old)
+        session["sar_active_path"] = dest
+        session["sar_display_name"] = up.filename
+        return dest, None
+
+    p = session.get("sar_active_path")
+    if p and os.path.isfile(p):
+        return p, None
+
+    return None, None
+
+
+GRAPH_OPTIONS = [
+    "cpu",
+    "load_avg",
+    "context_switches",
+    "memory",
+    "swap_io",
+    "disk",
+    "network",
+    "network_errors",
+    "sockets",
+]
 
 # Shown in the form, page section headings, and Plotly chart titles.
 GRAPH_LABELS = {
     "cpu": "CPU utilization",
+    "load_avg": "Run queue & load average",
+    "context_switches": "Task / context switching",
     "memory": "Memory usage",
+    "swap_io": "Swap in / out",
     "disk": "Disk latency and utilization",
     "network": "Network throughput",
     "network_errors": "Network errors and drops",
@@ -106,34 +176,93 @@ SOCKET_LEGEND_LABELS = {
 }
 
 MEM_LEGEND_LABELS = {
-    "kbmemfree": "Free memory (kB)",
-    "kbmemused": "Used memory (kB)",
+    "kbmemfree": "Free memory (MB)",
+    "kbmemused": "Used memory (MB)",
+    "kbbuffers": "Buffers (MB)",
+    "kbcached": "Cached (MB)",
+}
+
+SWAP_IO_LEGEND_LABELS = {
+    "pswpin_s": "Swap in (pages/s)",
+    "pswpout_s": "Swap out (pages/s)",
+}
+
+LOAD_QUEUE_LEGEND_LABELS = {
+    "runq_sz": "Run queue length",
+    "plist_sz": "Process list size",
+    "ldavg_1": "Load average (1 min)",
+    "ldavg_5": "Load average (5 min)",
+    "ldavg_15": "Load average (15 min)",
+}
+
+CONTEXT_SWITCH_LEGEND_LABELS = {
+    "proc_s": "Processes created/s",
+    "cswch_s": "Context switches/s",
 }
 
 
 def _load_sa_data(path: str, tz: str):
     """Load CPU, disk, and network frames plus unique ids for filter UI (best-effort)."""
-    cpu = disk = net = None
-    cpu_list, disk_list, iface_list = [], [], []
+
     try:
         cpu = get_cpu_data(path, "UTC", tz)
-        if cpu is not None and not cpu.empty and "cpu" in cpu.columns:
-            cpu_list = sorted(cpu["cpu"].unique().tolist(), key=lambda x: (x == "all", x))
     except Exception:
         cpu = None
     try:
         disk = get_disk_data(path, "UTC", tz)
-        if disk is not None and "device" in disk.columns and not disk.empty:
-            disk_list = sorted(disk["device"].dropna().astype(str).unique().tolist())
     except Exception:
         disk = None
     try:
         net = get_network_data(path, "UTC", tz)
-        if net is not None and "iface" in net.columns and not net.empty:
-            iface_list = sorted(net["iface"].dropna().astype(str).unique().tolist())
     except Exception:
         net = None
+
+    cpu_list, disk_list, iface_list = [], [], []
+    if cpu is not None and not cpu.empty and "cpu" in cpu.columns:
+        cpu_list = sorted(cpu["cpu"].unique().tolist(), key=lambda x: (x == "all", x))
+    if disk is not None and "device" in disk.columns and not disk.empty:
+        disk_list = sorted(disk["device"].dropna().astype(str).unique().tolist())
+    if net is not None and "iface" in net.columns and not net.empty:
+        iface_list = sorted(net["iface"].dropna().astype(str).unique().tolist())
+
     return cpu, disk, net, cpu_list, disk_list, iface_list
+
+
+def _prefetch_graph_datasets(path: str, tz: str, selected_graphs: list) -> dict:
+    """Run optional ``sar`` parsers for selected graphs (one subprocess each, sequential)."""
+    sg = set(selected_graphs)
+    out: dict = {}
+    if "load_avg" in sg:
+        try:
+            out["load_queue"] = get_load_queue_data(path, "UTC", tz)
+        except Exception:
+            out["load_queue"] = None
+    if "context_switches" in sg:
+        try:
+            out["context"] = get_context_switch_data(path, "UTC", tz)
+        except Exception:
+            out["context"] = None
+    if "memory" in sg:
+        try:
+            out["memory"] = get_memory_data(path, "UTC", tz)
+        except Exception:
+            out["memory"] = None
+    if "swap_io" in sg:
+        try:
+            out["swap_io"] = get_swap_io_data(path, "UTC", tz)
+        except Exception:
+            out["swap_io"] = None
+    if "network_errors" in sg:
+        try:
+            out["edev"] = get_network_edev_data(path, "UTC", tz)
+        except Exception:
+            out["edev"] = None
+    if "sockets" in sg:
+        try:
+            out["socket"] = get_socket_data(path, "UTC", tz)
+        except Exception:
+            out["socket"] = None
+    return out
 
 
 def _add_cpu_dropdown(fig, cpu_list):
@@ -167,10 +296,36 @@ def _add_cpu_dropdown(fig, cpu_list):
     )
 
 
+def _tabular_sar_line_html(df, metric_cols, title, legend_map, yaxis_title, x_range=None):
+    """Plotly line chart for generic SAR tabular frames (time + numeric columns)."""
+    if df is None or df.empty:
+        return None
+    cols = [c for c in metric_cols if c in df.columns]
+    if not cols:
+        return None
+    df = coerce_time_column(df)
+    fig = px.line(
+        df,
+        x="time",
+        y=cols,
+        title=title,
+        labels={c: legend_map.get(c, c) for c in cols},
+    )
+    fig.update_layout(
+        xaxis_title="Time",
+        yaxis_title=yaxis_title,
+        legend=dict(title="Series", font=dict(size=11)),
+    )
+    return finalize_sar_figure_html(fig, x_range)
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     cpu_graph = None
+    load_queue_graph = None
+    context_switch_graph = None
     mem_graph = None
+    swap_io_graph = None
     disk_graph = None
     net_graph = None
     net_err_graph = None
@@ -188,22 +343,44 @@ def index():
     selected_disk_metrics = []
     selected_network_metrics = []
     timezone = "UTC"
-    selected = None
+    active_sar_name = session.get("sar_display_name")
 
     sa_files = sorted(_get_sa_files())
 
     if request.method == "GET":
+        if request.args.get("clear_sar") == "1":
+            old = session.pop("sar_active_path", None)
+            session.pop("sar_display_name", None)
+            if old and str(old).startswith(UPLOAD_FOLDER):
+                _remove_path_quiet(old)
+            return redirect(url_for("index"))
+
         preview = request.args.get("preview_file")
         if preview and preview in sa_files:
-            selected = preview
+            pp = os.path.join(SA_FOLDER, preview)
+            if os.path.isfile(pp):
+                old = session.get("sar_active_path")
+                if old and str(old).startswith(UPLOAD_FOLDER) and os.path.isfile(old):
+                    _remove_path_quiet(old)
+                session["sar_active_path"] = pp
+                session["sar_display_name"] = preview
+
+        path_prev = session.get("sar_active_path")
+        if path_prev and os.path.isfile(path_prev):
             timezone = request.args.get("timezone", "UTC")
-            path_prev = os.path.join(SA_FOLDER, preview)
-            if os.path.isfile(path_prev):
-                try:
-                    hostname = get_hostname(path_prev) or "(unknown)"
-                except Exception:
-                    hostname = ""
+            active_sar_name = session.get("sar_display_name")
+            try:
+                hostname = get_hostname(path_prev) or "(unknown)"
+            except Exception:
+                hostname = ""
+            try:
                 _, _, _, cpu_list, disk_list, iface_list = _load_sa_data(path_prev, timezone)
+            except Exception:
+                cpu_list, disk_list, iface_list = [], [], []
+        else:
+            session.pop("sar_active_path", None)
+            session.pop("sar_display_name", None)
+            active_sar_name = None
 
     if request.method == "POST":
         tz = request.form.get("timezone", "UTC")
@@ -216,13 +393,29 @@ def index():
         selected_disk_metrics = request.form.getlist("disk_metrics")
         selected_network_metrics = request.form.getlist("network_metrics")
 
-        selected = request.form.get("selected_file")
-        path = os.path.join(SA_FOLDER, selected) if selected and selected in sa_files else None
+        path, _upload_err = _resolve_sar_path_for_request()
+        active_sar_name = session.get("sar_display_name")
+
+        if not path:
+            session.pop("sar_active_path", None)
+            session.pop("sar_display_name", None)
+            active_sar_name = None
+            error_message = "Please choose a file, then click Analyze."
 
         if path and os.path.isfile(path):
             try:
                 hostname = get_hostname(path) or "(unknown)"
                 cpu, disk, net, cpu_list, disk_list, iface_list = _load_sa_data(path, tz)
+                extra = _prefetch_graph_datasets(path, tz, selected_graphs)
+                cpu = coerce_time_column(cpu)
+                disk = coerce_time_column(disk)
+                net = coerce_time_column(net)
+                for _ek in list(extra.keys()):
+                    extra[_ek] = coerce_time_column(extra[_ek])
+                anchor_series = pick_anchor_time_series(cpu, disk, net, extra)
+                anchor_rng = initial_x_range_from_series(
+                    anchor_series, DEFAULT_INITIAL_WINDOW_SEC
+                )
                 if cpu is None:
                     cpu = pd.DataFrame()
                 if not selected_cpus and cpu_list:
@@ -287,7 +480,7 @@ def index():
                                 legend=leg,
                                 yaxis=dict(title="Usage %"),
                             )
-                            cpu_graph = cpu_fig.to_html(full_html=False)
+                            cpu_graph = finalize_sar_figure_html(cpu_fig, anchor_rng)
 
                     if cpu_graph is None:
                         if (cpu_df["cpu"] == "all").any():
@@ -320,21 +513,72 @@ def index():
                             legend=dict(title="Metric", font=dict(size=11)),
                             yaxis=dict(title="Usage %"),
                         )
-                        cpu_graph = cpu_fig.to_html(full_html=False)
+                        cpu_graph = finalize_sar_figure_html(cpu_fig, anchor_rng)
+
+                if "load_avg" in selected_graphs:
+                    lq = extra.get("load_queue")
+                    load_queue_graph = _tabular_sar_line_html(
+                        lq,
+                        (
+                            "runq_sz",
+                            "plist_sz",
+                            "ldavg_1",
+                            "ldavg_5",
+                            "ldavg_15",
+                        ),
+                        GRAPH_LABELS["load_avg"],
+                        LOAD_QUEUE_LEGEND_LABELS,
+                        "Run queue / load",
+                        anchor_rng,
+                    )
+
+                if "context_switches" in selected_graphs:
+                    cw = extra.get("context")
+                    ctx_cols = tuple(c for c in ("proc_s", "cswch_s") if c in cw.columns) if cw is not None else ()
+                    context_switch_graph = _tabular_sar_line_html(
+                        cw,
+                        ctx_cols,
+                        GRAPH_LABELS["context_switches"],
+                        CONTEXT_SWITCH_LEGEND_LABELS,
+                        "Per second",
+                        anchor_rng,
+                    )
 
                 if "memory" in selected_graphs:
-                    mem = get_memory_data(path, "UTC", tz)
-                    mem_cols = [c for c in ["kbmemfree", "kbmemused"] if c in mem.columns]
-                    if mem_cols:
+                    mem = extra.get("memory")
+                    mem_cols = []
+                    if mem is not None and not mem.empty:
+                        mem_cols = [
+                            c
+                            for c in ("kbmemfree", "kbmemused", "kbbuffers", "kbcached")
+                            if c in mem.columns
+                        ]
+                    if mem is not None and not mem.empty and mem_cols:
+                        mem = coerce_time_column(mem)
                         mem_fig = px.line(mem, x="time", y=mem_cols, title=GRAPH_LABELS["memory"])
-                    else:
+                    elif mem is not None and not mem.empty:
+                        mem = coerce_time_column(mem)
                         mem_fig = px.line(mem, x="time", y="time", title=GRAPH_LABELS["memory"])
-                    name_map = MEM_LEGEND_LABELS
-                    for t in mem_fig.data:
-                        t.name = name_map.get(str(t.name), str(t.name))
-                    if mem_cols:
-                        mem_fig.update_layout(yaxis_title="Kilobytes")
-                    mem_graph = mem_fig.to_html(full_html=False)
+                    else:
+                        mem_fig = None
+                    if mem_fig is not None:
+                        name_map = MEM_LEGEND_LABELS
+                        for t in mem_fig.data:
+                            t.name = name_map.get(str(t.name), str(t.name))
+                        if mem_cols:
+                            mem_fig.update_layout(yaxis_title="Megabytes (MB)")
+                        mem_graph = finalize_sar_figure_html(mem_fig, anchor_rng)
+
+                if "swap_io" in selected_graphs:
+                    swap_df = extra.get("swap_io")
+                    swap_io_graph = _tabular_sar_line_html(
+                        swap_df,
+                        ("pswpin_s", "pswpout_s"),
+                        GRAPH_LABELS["swap_io"],
+                        SWAP_IO_LEGEND_LABELS,
+                        "Pages per second",
+                        anchor_rng,
+                    )
 
                 if "disk" in selected_graphs and disk is not None and not disk.empty:
                     disk_df = disk.copy()
@@ -371,7 +615,7 @@ def index():
                                 title=GRAPH_LABELS["disk"],
                                 legend=dict(title="Series", font=dict(size=10), tracegroupgap=0),
                             )
-                            disk_graph = disk_fig.to_html(full_html=False)
+                            disk_graph = finalize_sar_figure_html(disk_fig, anchor_rng)
                     if disk_graph is None and not disk_df.empty:
                         ycols = [c for c in ("await", "util") if c in disk_df.columns]
                         if ycols:
@@ -383,7 +627,7 @@ def index():
                                 title=GRAPH_LABELS["disk"],
                                 labels={c: DISK_LEGEND_LABELS.get(c, c) for c in ycols},
                             )
-                            disk_graph = disk_fig.to_html(full_html=False)
+                            disk_graph = finalize_sar_figure_html(disk_fig, anchor_rng)
 
                 if "network" in selected_graphs and net is not None and not net.empty:
                     net_df = net.copy()
@@ -421,7 +665,7 @@ def index():
                                 title=GRAPH_LABELS["network"],
                                 legend=dict(title="Series", font=dict(size=10), tracegroupgap=0),
                             )
-                            net_graph = net_fig.to_html(full_html=False)
+                            net_graph = finalize_sar_figure_html(net_fig, anchor_rng)
                     if net_graph is None and not net_df.empty:
                         ycols = [c for c in ("rxpck_s", "txpck_s") if c in net_df.columns]
                         if ycols:
@@ -433,10 +677,10 @@ def index():
                                 title=GRAPH_LABELS["network"],
                                 labels={c: NETWORK_LEGEND_LABELS.get(c, c) for c in ycols},
                             )
-                            net_graph = net_fig.to_html(full_html=False)
+                            net_graph = finalize_sar_figure_html(net_fig, anchor_rng)
 
                 if "network_errors" in selected_graphs:
-                    edev = get_network_edev_data(path, "UTC", tz)
+                    edev = extra.get("edev")
                     if edev is not None and not edev.empty:
                         edev_df = edev.copy()
                         edev_df["iface"] = edev_df["iface"].astype(str)
@@ -484,10 +728,10 @@ def index():
                                     "time": "Time",
                                 },
                             )
-                            net_err_graph = net_err_fig.to_html(full_html=False)
+                            net_err_graph = finalize_sar_figure_html(net_err_fig, anchor_rng)
 
                 if "sockets" in selected_graphs:
-                    sock = get_socket_data(path, "UTC", tz)
+                    sock = extra.get("socket")
                     if sock is not None and not sock.empty:
                         sock_cols = [
                             c
@@ -502,6 +746,7 @@ def index():
                             if c in sock.columns
                         ]
                         if sock_cols:
+                            sock = coerce_time_column(sock)
                             sock_fig = px.line(
                                 sock,
                                 x="time",
@@ -511,22 +756,22 @@ def index():
                                     c: SOCKET_LEGEND_LABELS.get(c, c) for c in sock_cols
                                 },
                             )
-                            sock_graph = sock_fig.to_html(full_html=False)
+                            sock_graph = finalize_sar_figure_html(sock_fig, anchor_rng)
 
             except Exception as e:
                 error_message = str(e)
-        else:
-            error_message = "Please select a SAR file from the sa folder."
 
     return render_template(
         "index.html",
         cpu_graph=cpu_graph,
+        load_queue_graph=load_queue_graph,
+        context_switch_graph=context_switch_graph,
         mem_graph=mem_graph,
+        swap_io_graph=swap_io_graph,
         disk_graph=disk_graph,
         net_graph=net_graph,
         net_err_graph=net_err_graph,
         sock_graph=sock_graph,
-        sa_files=sa_files,
         error_message=error_message,
         hostname=hostname,
         cpu_list=cpu_list,
@@ -537,7 +782,7 @@ def index():
         selected_disks=selected_disks,
         selected_ifaces=selected_ifaces,
         graph_options=GRAPH_OPTIONS,
-        selected_file=selected,
+        active_sar_name=active_sar_name,
         timezone=timezone,
         selected_cpu_metrics=selected_cpu_metrics,
         selected_disk_metrics=selected_disk_metrics,

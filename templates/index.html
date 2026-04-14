@@ -45,6 +45,19 @@
             font-size: 1rem;
             width: 100%;
         }
+        input[type="file"] {
+            width: 100%;
+            max-width: 100%;
+            padding: 0.5rem 0;
+            font-size: 0.95rem;
+            color: var(--text);
+        }
+        .sar-current {
+            margin: 0.35rem 0 0 0;
+            font-size: 0.9rem;
+            color: var(--muted);
+        }
+        .sar-current a { color: var(--accent); }
         /* Compact multi-selects (CPU / disk / iface): few visible rows, scroll inside */
         select.resource-multiselect {
             max-height: 9.5rem;
@@ -90,32 +103,7 @@
             min-width: 0;
             max-width: 100%;
         }
-        .resource-picker-col .cpu-toolbar input[type="search"],
-        .resource-picker-col .list-toolbar input[type="search"] {
-            max-width: 100%;
-            flex: 1 1 auto;
-            min-width: 0;
-        }
         .hint { display: block; margin-top: 0.25rem; color: var(--muted); font-size: 0.85rem; }
-        .cpu-toolbar {
-            display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem;
-            align-items: center; margin: 0.5rem 0 0.25rem 0;
-        }
-        .cpu-toolbar input[type="search"],
-        .cpu-toolbar input[type="number"] {
-            padding: 0.45rem 0.65rem; border-radius: 8px;
-            border: 1px solid rgba(255,255,255,0.1);
-            background: var(--bg); color: var(--text);
-        }
-        .cpu-toolbar input[type="search"] { min-width: 10rem; flex: 1 1 8rem; max-width: 20rem; }
-        .cpu-toolbar .cpu-range-input { width: 4.5rem; min-width: 0; }
-        .list-toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem; align-items: center; margin: 0.5rem 0 0.25rem 0; }
-        .list-toolbar input[type="search"] {
-            padding: 0.45rem 0.65rem; border-radius: 8px;
-            border: 1px solid rgba(255,255,255,0.1);
-            background: var(--bg); color: var(--text);
-            min-width: 10rem; flex: 1 1 8rem; max-width: 20rem;
-        }
         .btn-tiny {
             padding: 0.35rem 0.65rem; font-size: 0.82rem; border-radius: 6px;
             border: 1px solid rgba(255,255,255,0.15);
@@ -168,21 +156,19 @@
 <script type="application/json" id="saved_network_metrics">{{ (selected_network_metrics or [])|tojson }}</script>
 <script type="application/json" id="saved_disk_metrics">{{ (selected_disk_metrics or [])|tojson }}</script>
 <h2>sarInsight - SAR Analyzer</h2>
-{% if hostname %}
-<p class="hostname">Host: <strong>{{ hostname }}</strong></p>
-{% endif %}
 
-<form method="post">
+<form method="post" enctype="multipart/form-data">
     <div class="card">
         <div class="form-grid">
             <div class="form-group">
-                <label>Select SAR file from sa folder</label>
-                <select name="selected_file" id="sar_file_select">
-                    <option value="">-- Choose file --</option>
-                    {% for f in sa_files %}
-                    <option value="{{ f }}" {% if selected_file == f %}selected{% endif %}>{{ f }}</option>
-                    {% endfor %}
-                </select>
+                <label for="sar_file_input">Choose sar file</label>
+                <input type="file" name="sar_file" id="sar_file_input" autocomplete="off">
+                {% if active_sar_name %}
+                <p class="sar-current">Using: <strong>{{ active_sar_name }}</strong>
+                    <span aria-hidden="true"> · </span>
+                    <a href="{{ url_for('index', clear_sar=1) }}">Clear</a>
+                </p>
+                {% endif %}
             </div>
             <div class="form-group">
                 <label>Timezone</label>
@@ -206,39 +192,22 @@
                 </div>
             </div>
             {% if cpu_list or iface_list or disk_list %}
-            <div class="resource-pickers-row graphs-select">
+            <div class="resource-pickers-row graphs-select" id="resource_pickers_row">
                 {% if cpu_list %}
-                <div class="form-group resource-picker-col">
-                    <label>CPU(s) <span id="cpu_selected_count" class="hint" style="display:inline;"></span></label>
-                    <div class="cpu-toolbar">
-                        <input type="search" id="cpu_filter" placeholder="Filter CPUs" autocomplete="off" aria-label="Filter CPU list">
-                        <button type="button" class="btn-tiny" id="cpu_sel_all" title="Select every CPU in the file">All</button>
-                        <button type="button" class="btn-tiny" id="cpu_sel_visible" title="Select CPUs that match the filter">Filtered</button>
-                        <button type="button" class="btn-tiny" id="cpu_sel_clear">Clear</button>
-                        <span class="hint" style="margin:0;">Range</span>
-                        <input type="number" class="cpu-range-input" id="cpu_range_lo" min="0" step="1" placeholder="from" aria-label="CPU range from">
-                        <span class="hint" style="margin:0;">–</span>
-                        <input type="number" class="cpu-range-input" id="cpu_range_hi" min="0" step="1" placeholder="to" aria-label="CPU range to">
-                        <button type="button" class="btn-tiny" id="cpu_range_apply">Apply</button>
-                    </div>
+                <div class="form-group resource-picker-col" id="wrap_resource_cpu">
+                    <label>CPU(s)</label>
                     {% set cpu_sel_rows = [6, cpu_list|length]|min %}
                     <select name="cpus" id="cpu_select" class="resource-multiselect" multiple size="{{ cpu_sel_rows }}">
                         {% for c in cpu_list %}
                         <option value="{{ c }}" {% if c in selected_cpus %}selected{% endif %}>CPU {{ c }}</option>
                         {% endfor %}
                     </select>
-                    <small class="hint">Toolbar + Ctrl/Cmd. Empty metric matrix → averaged CPU.</small>
+                    <small class="hint">Ctrl/Cmd-click for multiple CPUs. Empty metric matrix → averaged CPU.</small>
                 </div>
                 {% endif %}
                 {% if iface_list %}
-                <div class="form-group resource-picker-col">
-                    <label>Network <span id="iface_selected_count" class="hint" style="display:inline;"></span></label>
-                    <div class="list-toolbar">
-                        <input type="search" id="iface_filter" placeholder="Filter ifaces" autocomplete="off" aria-label="Filter interface list">
-                        <button type="button" class="btn-tiny" id="iface_sel_all">All</button>
-                        <button type="button" class="btn-tiny" id="iface_sel_visible">Filtered</button>
-                        <button type="button" class="btn-tiny" id="iface_sel_clear">Clear</button>
-                    </div>
+                <div class="form-group resource-picker-col" id="wrap_resource_network">
+                    <label>Network</label>
                     {% set iface_sel_rows = [6, iface_list|length]|min %}
                     <select name="ifaces" id="iface_select" class="resource-multiselect" multiple size="{{ iface_sel_rows }}">
                         {% for i in iface_list %}
@@ -249,14 +218,8 @@
                 </div>
                 {% endif %}
                 {% if disk_list %}
-                <div class="form-group resource-picker-col">
-                    <label>Disk <span id="disk_selected_count" class="hint" style="display:inline;"></span></label>
-                    <div class="list-toolbar">
-                        <input type="search" id="disk_filter" placeholder="Filter devices" autocomplete="off" aria-label="Filter disk list">
-                        <button type="button" class="btn-tiny" id="disk_sel_all">All</button>
-                        <button type="button" class="btn-tiny" id="disk_sel_visible">Filtered</button>
-                        <button type="button" class="btn-tiny" id="disk_sel_clear">Clear</button>
-                    </div>
+                <div class="form-group resource-picker-col" id="wrap_resource_disk">
+                    <label>Disk</label>
                     {% set disk_sel_rows = [6, disk_list|length]|min %}
                     <select name="disks" id="disk_select" class="resource-multiselect" multiple size="{{ disk_sel_rows }}">
                         {% for d in disk_list %}
@@ -307,17 +270,24 @@ function syncSelectAllGraphsMaster() {
     master.checked = c === boxes.length;
 }
 
+document.getElementById('graphs_checkbox_group')?.addEventListener('change', function(e) {
+    if (e.target && e.target.name === 'graphs') syncSelectAllGraphsMaster();
+    syncGraphDependentUI();
+});
+
 document.getElementById('select_all_graphs')?.addEventListener('change', function() {
     var checkboxes = document.querySelectorAll('input[name="graphs"]');
     checkboxes.forEach(function(cb) { cb.checked = this.checked; }, this);
     this.indeterminate = false;
-});
-
-document.getElementById('graphs_checkbox_group')?.addEventListener('change', function(e) {
-    if (e.target && e.target.name === 'graphs') syncSelectAllGraphsMaster();
+    syncGraphDependentUI();
 });
 
 syncSelectAllGraphsMaster();
+
+function isGraphChecked(id) {
+    var el = document.querySelector('input[name="graphs"][value="' + id + '"]');
+    return !!(el && el.checked);
+}
 
 var CPU_METRICS = [
     { id: 'user', label: '%user' },
@@ -363,33 +333,17 @@ function setAllCpuMetricCells(checked) {
     syncCpuMatrixMasterCheckbox();
 }
 
-function applyCpuFilter() {
-    var inp = document.getElementById('cpu_filter');
-    var sel = document.getElementById('cpu_select');
-    if (!inp || !sel) return;
-    var q = (inp.value || '').trim().toLowerCase();
-    Array.from(sel.options).forEach(function(opt) {
-        var t = (opt.textContent || '').toLowerCase();
-        var v = String(opt.value || '').toLowerCase();
-        opt.hidden = !!(q && t.indexOf(q) < 0 && v.indexOf(q) < 0);
-    });
-}
-
-function updateCpuSelectedCount() {
-    var sel = document.getElementById('cpu_select');
-    var el = document.getElementById('cpu_selected_count');
-    if (!sel || !el) return;
-    var n = sel.selectedOptions.length;
-    el.textContent = n ? '(' + n + ' selected)' : '';
-}
-
 function buildCpuMetricsGrid() {
     var sel = document.getElementById('cpu_select');
     var section = document.getElementById('cpu_metrics_section');
     var grid = document.getElementById('cpu_metrics_grid');
     if (!sel || !section || !grid) return;
+    if (!isGraphChecked('cpu')) {
+        section.style.display = 'none';
+        grid.innerHTML = '';
+        return;
+    }
     var selected = Array.from(sel.selectedOptions).map(function(o) { return o.value; });
-    updateCpuSelectedCount();
     if (selected.length === 0) {
         section.style.display = 'none';
         return;
@@ -479,47 +433,9 @@ function buildCpuMetricsGrid() {
 }
 
 document.getElementById('cpu_select')?.addEventListener('change', buildCpuMetricsGrid);
-document.getElementById('cpu_filter')?.addEventListener('input', applyCpuFilter);
-document.getElementById('cpu_sel_all')?.addEventListener('click', function() {
-    var sel = document.getElementById('cpu_select');
-    if (!sel) return;
-    Array.from(sel.options).forEach(function(o) { o.selected = true; });
-    buildCpuMetricsGrid();
-});
-document.getElementById('cpu_sel_visible')?.addEventListener('click', function() {
-    var sel = document.getElementById('cpu_select');
-    if (!sel) return;
-    Array.from(sel.options).forEach(function(o) {
-        if (!o.hidden) o.selected = true;
-    });
-    buildCpuMetricsGrid();
-});
-document.getElementById('cpu_sel_clear')?.addEventListener('click', function() {
-    var sel = document.getElementById('cpu_select');
-    if (!sel) return;
-    Array.from(sel.options).forEach(function(o) { o.selected = false; });
-    buildCpuMetricsGrid();
-});
-document.getElementById('cpu_range_apply')?.addEventListener('click', function() {
-    var lo = parseInt(document.getElementById('cpu_range_lo').value, 10);
-    var hi = parseInt(document.getElementById('cpu_range_hi').value, 10);
-    var sel = document.getElementById('cpu_select');
-    if (!sel || isNaN(lo) || isNaN(hi)) return;
-    if (lo > hi) { var t = lo; lo = hi; hi = t; }
-    Array.from(sel.options).forEach(function(o) {
-        var n = parseInt(o.value, 10);
-        if (!isNaN(n) && n >= lo && n <= hi) o.selected = true;
-    });
-    buildCpuMetricsGrid();
-});
 document.getElementById('cpu_metrics_section')?.addEventListener('change', function(e) {
     if (e.target && e.target.name === 'cpu_metrics') syncCpuMatrixMasterCheckbox();
 });
-
-if (document.getElementById('cpu_select')) {
-    applyCpuFilter();
-    buildCpuMetricsGrid();
-}
 
 var DISK_METRICS = [
     { id: 'areq_sz', label: 'areq-sz' },
@@ -562,33 +478,17 @@ function setAllDiskMetricCells(checked) {
     syncDiskMatrixMasterCheckbox();
 }
 
-function applyDiskFilter() {
-    var inp = document.getElementById('disk_filter');
-    var sel = document.getElementById('disk_select');
-    if (!inp || !sel) return;
-    var q = (inp.value || '').trim().toLowerCase();
-    Array.from(sel.options).forEach(function(opt) {
-        var t = (opt.textContent || '').toLowerCase();
-        var v = String(opt.value || '').toLowerCase();
-        opt.hidden = !!(q && t.indexOf(q) < 0 && v.indexOf(q) < 0);
-    });
-}
-
-function updateDiskSelectedCount() {
-    var sel = document.getElementById('disk_select');
-    var el = document.getElementById('disk_selected_count');
-    if (!sel || !el) return;
-    var n = sel.selectedOptions.length;
-    el.textContent = n ? '(' + n + ' selected)' : '';
-}
-
 function buildDiskMetricsGrid() {
     var sel = document.getElementById('disk_select');
     var section = document.getElementById('disk_metrics_section');
     var grid = document.getElementById('disk_metrics_grid');
     if (!sel || !section || !grid) return;
+    if (!isGraphChecked('disk')) {
+        section.style.display = 'none';
+        grid.innerHTML = '';
+        return;
+    }
     var selected = Array.from(sel.selectedOptions).map(function(o) { return o.value; });
-    updateDiskSelectedCount();
     if (selected.length === 0) {
         section.style.display = 'none';
         return;
@@ -672,32 +572,9 @@ function buildDiskMetricsGrid() {
 }
 
 document.getElementById('disk_select')?.addEventListener('change', buildDiskMetricsGrid);
-document.getElementById('disk_filter')?.addEventListener('input', applyDiskFilter);
-document.getElementById('disk_sel_all')?.addEventListener('click', function() {
-    var s = document.getElementById('disk_select');
-    if (!s) return;
-    Array.from(s.options).forEach(function(o) { o.selected = true; });
-    buildDiskMetricsGrid();
-});
-document.getElementById('disk_sel_visible')?.addEventListener('click', function() {
-    var s = document.getElementById('disk_select');
-    if (!s) return;
-    Array.from(s.options).forEach(function(o) { if (!o.hidden) o.selected = true; });
-    buildDiskMetricsGrid();
-});
-document.getElementById('disk_sel_clear')?.addEventListener('click', function() {
-    var s = document.getElementById('disk_select');
-    if (!s) return;
-    Array.from(s.options).forEach(function(o) { o.selected = false; });
-    buildDiskMetricsGrid();
-});
 document.getElementById('disk_metrics_section')?.addEventListener('change', function(e) {
     if (e.target && e.target.name === 'disk_metrics') syncDiskMatrixMasterCheckbox();
 });
-if (document.getElementById('disk_select')) {
-    applyDiskFilter();
-    buildDiskMetricsGrid();
-}
 
 var NETWORK_METRICS = [
     { id: 'rxpck_s', label: 'rxpck/s' },
@@ -744,33 +621,17 @@ function setAllNetworkMetricCells(checked) {
     syncNetworkMatrixMasterCheckbox();
 }
 
-function applyIfaceFilter() {
-    var inp = document.getElementById('iface_filter');
-    var sel = document.getElementById('iface_select');
-    if (!inp || !sel) return;
-    var q = (inp.value || '').trim().toLowerCase();
-    Array.from(sel.options).forEach(function(opt) {
-        var t = (opt.textContent || '').toLowerCase();
-        var v = String(opt.value || '').toLowerCase();
-        opt.hidden = !!(q && t.indexOf(q) < 0 && v.indexOf(q) < 0);
-    });
-}
-
-function updateIfaceSelectedCount() {
-    var sel = document.getElementById('iface_select');
-    var el = document.getElementById('iface_selected_count');
-    if (!sel || !el) return;
-    var n = sel.selectedOptions.length;
-    el.textContent = n ? '(' + n + ' selected)' : '';
-}
-
 function buildNetworkMetricsGrid() {
     var sel = document.getElementById('iface_select');
     var section = document.getElementById('network_metrics_section');
     var grid = document.getElementById('network_metrics_grid');
     if (!sel || !section || !grid) return;
+    if (!isGraphChecked('network') && !isGraphChecked('network_errors')) {
+        section.style.display = 'none';
+        grid.innerHTML = '';
+        return;
+    }
     var selected = Array.from(sel.selectedOptions).map(function(o) { return o.value; });
-    updateIfaceSelectedCount();
     if (selected.length === 0) {
         section.style.display = 'none';
         return;
@@ -854,47 +715,50 @@ function buildNetworkMetricsGrid() {
 }
 
 document.getElementById('iface_select')?.addEventListener('change', buildNetworkMetricsGrid);
-document.getElementById('iface_filter')?.addEventListener('input', applyIfaceFilter);
-document.getElementById('iface_sel_all')?.addEventListener('click', function() {
-    var s = document.getElementById('iface_select');
-    if (!s) return;
-    Array.from(s.options).forEach(function(o) { o.selected = true; });
-    buildNetworkMetricsGrid();
-});
-document.getElementById('iface_sel_visible')?.addEventListener('click', function() {
-    var s = document.getElementById('iface_select');
-    if (!s) return;
-    Array.from(s.options).forEach(function(o) { if (!o.hidden) o.selected = true; });
-    buildNetworkMetricsGrid();
-});
-document.getElementById('iface_sel_clear')?.addEventListener('click', function() {
-    var s = document.getElementById('iface_select');
-    if (!s) return;
-    Array.from(s.options).forEach(function(o) { o.selected = false; });
-    buildNetworkMetricsGrid();
-});
 document.getElementById('network_metrics_section')?.addEventListener('change', function(e) {
     if (e.target && e.target.name === 'network_metrics') syncNetworkMatrixMasterCheckbox();
 });
-if (document.getElementById('iface_select')) {
-    applyIfaceFilter();
+
+function syncGraphDependentUI() {
+    var wantCpu = isGraphChecked('cpu');
+    var wantNet = isGraphChecked('network') || isGraphChecked('network_errors');
+    var wantDisk = isGraphChecked('disk');
+
+    var wCpu = document.getElementById('wrap_resource_cpu');
+    var wNet = document.getElementById('wrap_resource_network');
+    var wDisk = document.getElementById('wrap_resource_disk');
+    var row = document.getElementById('resource_pickers_row');
+
+    if (wCpu) {
+        wCpu.style.display = wantCpu ? '' : 'none';
+        var cs = document.getElementById('cpu_select');
+        if (cs) cs.disabled = !wantCpu;
+    }
+    if (wNet) {
+        wNet.style.display = wantNet ? '' : 'none';
+        var ins = document.getElementById('iface_select');
+        if (ins) ins.disabled = !wantNet;
+    }
+    if (wDisk) {
+        wDisk.style.display = wantDisk ? '' : 'none';
+        var ds = document.getElementById('disk_select');
+        if (ds) ds.disabled = !wantDisk;
+    }
+    if (row) {
+        var showRow = (wantCpu && wCpu) || (wantNet && wNet) || (wantDisk && wDisk);
+        row.style.display = showRow ? '' : 'none';
+    }
+
+    buildCpuMetricsGrid();
+    buildDiskMetricsGrid();
     buildNetworkMetricsGrid();
 }
 
-document.getElementById('sar_file_select')?.addEventListener('change', function() {
-    var v = this.value;
-    var base = window.location.pathname || '/';
-    if (!v) {
-        window.location.href = base;
-        return;
-    }
-    var tzEl = document.querySelector('select[name="timezone"]');
-    var tq = tzEl && tzEl.value ? '&timezone=' + encodeURIComponent(tzEl.value) : '';
-    window.location.href = base + '?preview_file=' + encodeURIComponent(v) + tq;
-});
+syncGraphDependentUI();
+
 </script>
 
-{% if cpu_graph or mem_graph or disk_graph or net_graph or net_err_graph or sock_graph %}
+{% if cpu_graph or load_queue_graph or context_switch_graph or mem_graph or swap_io_graph or disk_graph or net_graph or net_err_graph or sock_graph %}
 <hr style="border-color: rgba(255,255,255,0.1); margin: 2rem 0;">
 
 {% if cpu_graph %}
@@ -904,10 +768,31 @@ document.getElementById('sar_file_select')?.addEventListener('change', function(
 </div>
 {% endif %}
 
+{% if load_queue_graph %}
+<div class="graph-section">
+    <h3>{{ graph_labels.load_avg }}</h3>
+    <div class="graph-wrapper">{{ load_queue_graph|safe }}</div>
+</div>
+{% endif %}
+
+{% if context_switch_graph %}
+<div class="graph-section">
+    <h3>{{ graph_labels.context_switches }}</h3>
+    <div class="graph-wrapper">{{ context_switch_graph|safe }}</div>
+</div>
+{% endif %}
+
 {% if mem_graph %}
 <div class="graph-section">
     <h3>{{ graph_labels.memory }}</h3>
     <div class="graph-wrapper">{{ mem_graph|safe }}</div>
+</div>
+{% endif %}
+
+{% if swap_io_graph %}
+<div class="graph-section">
+    <h3>{{ graph_labels.swap_io }}</h3>
+    <div class="graph-wrapper">{{ swap_io_graph|safe }}</div>
 </div>
 {% endif %}
 
@@ -941,37 +826,132 @@ document.getElementById('sar_file_select')?.addEventListener('change', function(
 
 <script>
 (function() {
-    function syncTimeRange() {
-        var wrappers = document.querySelectorAll('.graph-wrapper');
-        var plotIds = [];
-        wrappers.forEach(function(w) {
-            var div = w.querySelector('div[id]');
-            if (div && div.id) plotIds.push(div.id);
-        });
-        if (plotIds.length < 2) return;
-        var updating = false;
-        plotIds.forEach(function(id) {
-            var el = document.getElementById(id);
-            if (el && el.on) {
-                el.on('plotly_relayout', function(data) {
-                    if (updating) return;
-                    var range = data['xaxis.range'];
-                    if (!range || !Array.isArray(range)) {
-                        if (data['xaxis.range[0]'] !== undefined && data['xaxis.range[1]'] !== undefined) {
-                            range = [data['xaxis.range[0]'], data['xaxis.range[1]']];
-                        } else return;
-                    }
-                    updating = true;
-                    plotIds.forEach(function(otherId) {
-                        if (otherId !== id) {
-                            Plotly.relayout(otherId, {'xaxis.range': range});
-                        }
-                    });
-                    setTimeout(function() { updating = false; }, 100);
-                });
+    function collectPlotIds() {
+        var seen = {};
+        var ids = [];
+        var nodes = document.querySelectorAll('.graph-wrapper .js-plotly-plot, .graph-wrapper .plotly-graph-div');
+        nodes.forEach(function(div) {
+            if (div && div.id && !seen[div.id]) {
+                seen[div.id] = true;
+                ids.push(div.id);
             }
         });
+        if (ids.length) return ids;
+        document.querySelectorAll('.graph-wrapper').forEach(function(w) {
+            var div = w.querySelector('div[id]');
+            if (div && div.id && !seen[div.id]) {
+                seen[div.id] = true;
+                ids.push(div.id);
+            }
+        });
+        return ids;
     }
+
+    function readXRangeFromEventData(data) {
+        if (!data || typeof data !== 'object') return null;
+        var r = data['xaxis.range'];
+        if (Array.isArray(r) && r.length >= 2) return [r[0], r[1]];
+        var a = data['xaxis.range[0]'];
+        var b = data['xaxis.range[1]'];
+        if (a !== undefined && b !== undefined) return [a, b];
+        return null;
+    }
+
+    function getXRangeFromGd(gd) {
+        if (!gd || !gd.layout || !gd.layout.xaxis) return null;
+        var xa = gd.layout.xaxis;
+        if (xa.autorange === true) return null;
+        var r = xa.range;
+        if (Array.isArray(r) && r.length >= 2) return [r[0], r[1]];
+        return null;
+    }
+
+    function relayoutTouchesXAxis(data) {
+        if (!data || typeof data !== 'object') return false;
+        return Object.keys(data).some(function(k) {
+            return k === 'xaxis' || k.indexOf('xaxis.') === 0;
+        });
+    }
+
+    function isAxesReset(data) {
+        if (!data || typeof data !== 'object') return false;
+        if (data['xaxis.autorange'] === true || data['yaxis.autorange'] === true) return true;
+        return false;
+    }
+
+    function finishUpdating() {
+        setTimeout(function() { updating = false; }, 350);
+    }
+
+    var updating = false;
+
+    function syncTimeRange() {
+        if (typeof Plotly === 'undefined' || typeof Plotly.relayout !== 'function') return;
+
+        var plotIds = collectPlotIds();
+        if (plotIds.length < 2) return;
+
+        var resetPatch = { 'xaxis.autorange': true, 'yaxis.autorange': true };
+
+        function relayoutAll(patch) {
+            plotIds.forEach(function(pid) {
+                Plotly.relayout(pid, patch);
+            });
+        }
+
+        function applyXRangeToAll(range) {
+            if (!range || range.length < 2) return;
+            var xPatch = { 'xaxis.range': [range[0], range[1]], 'xaxis.autorange': false };
+            plotIds.forEach(function(pid) {
+                Plotly.relayout(pid, xPatch);
+            });
+        }
+
+        plotIds.forEach(function(id) {
+            var el = document.getElementById(id);
+            if (!el || typeof el.on !== 'function') return;
+
+            el.on('plotly_relayout', function(data) {
+                if (updating) return;
+                if (!data || typeof data !== 'object') return;
+                if (Object.keys(data).length === 0) return;
+
+                if (isAxesReset(data)) {
+                    updating = true;
+                    relayoutAll(resetPatch);
+                    finishUpdating();
+                    return;
+                }
+
+                if (!relayoutTouchesXAxis(data)) return;
+
+                var range = readXRangeFromEventData(data) || getXRangeFromGd(el);
+                if (range) {
+                    updating = true;
+                    applyXRangeToAll(range);
+                    finishUpdating();
+                    return;
+                }
+
+                updating = true;
+                requestAnimationFrame(function() {
+                    var r2 = getXRangeFromGd(el);
+                    if (r2) {
+                        applyXRangeToAll(r2);
+                    }
+                    finishUpdating();
+                });
+            });
+
+            el.on('plotly_doubleclick', function() {
+                if (updating) return;
+                updating = true;
+                relayoutAll(resetPatch);
+                finishUpdating();
+            });
+        });
+    }
+
     window.addEventListener('load', syncTimeRange);
 })();
 </script>
