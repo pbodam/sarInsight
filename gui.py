@@ -83,9 +83,9 @@ class SarInsightGUI(QWidget):
         self.cpu_plot.plot(cpu["system"].values, pen="b", name="system")
         self.cpu_plot.plot(cpu["iowait"].values, pen="y", name="iowait")
 
-        # Memory (used and free, in MB)
-        self.mem_plot.plot(mem["kbmemused"].values, pen="g", name="Used (MB)")
-        self.mem_plot.plot(mem["kbmemfree"].values, pen="c", name="Free (MB)")
+        # Memory (used and free, in %)
+        self.mem_plot.plot(mem["kbmemused"].values, pen="g", name="Used (%)")
+        self.mem_plot.plot(mem["kbmemfree"].values, pen="c", name="Free (%)")
 
         # Disk latency
         self.disk_plot.plot(disk["await"].values, pen="m")

@@ -1,29 +1,25 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PORT=5000
 
 WORKDIR /app
 
-# Install sar command support (sysstat) used by the parser.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    sysstat \
+# sysstat provides the `sar` binary used by the parser modules.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends sysstat \
     && rm -rf /var/lib/apt/lists/*
 
-# Install only web runtime dependencies (GUI deps intentionally excluded).
-RUN pip install --upgrade pip && pip install \
-    flask \
-    pandas \
-    plotly \
-    pytz \
-    gunicorn
+COPY requirements.txt /app/requirements.txt
+RUN pip install --upgrade pip \
+    && pip install -r /app/requirements.txt
 
-COPY . .
+COPY . /app
 
-# Create data folders expected by the app.
-RUN mkdir -p /app/sa /app/sos
+RUN mkdir -p /app/sa
 
 EXPOSE 5000
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "app:app"]
+CMD ["python", "-c", "import os; from app import app; app.run(host='0.0.0.0', port=int(os.getenv('PORT', '5000')))"]

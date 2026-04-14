@@ -13,7 +13,3 @@ node_modules
 dist
 build
 *.log
-
-# Large runtime data; mount at runtime instead
-sa
-sos
