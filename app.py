@@ -167,12 +167,12 @@ EDEV_LEGEND_LABELS = {
 }
 
 SOCKET_LEGEND_LABELS = {
-    "totsck": "Total sockets",
-    "tcpsck": "TCP in use",
-    "udpsck": "UDP in use",
-    "rawsck": "RAW sockets",
-    "ip_frag": "IP fragments in use",
-    "tcp_tw": "TCP TIME-WAIT",
+    "totsck": "Total Open Sockets",
+    "tcpsck": "Active TCP Sockets",
+    "udpsck": "Active UDP Sockets",
+    "rawsck": "Raw IP Sockets",
+    "ip_frag": "IP Fragment Buffers",
+    "tcp_tw": "TCP TIME_WAIT Sockets",
 }
 
 MEM_LEGEND_LABELS = {
@@ -183,8 +183,8 @@ MEM_LEGEND_LABELS = {
 }
 
 SWAP_IO_LEGEND_LABELS = {
-    "pswpin_s": "Swap in (pages/s)",
-    "pswpout_s": "Swap out (pages/s)",
+    "pswpin_s": "Pages swapped from disk into RAM per second",
+    "pswpout_s": "Pages swapped from RAM to disk per second",
 }
 
 LOAD_QUEUE_LEGEND_LABELS = {
@@ -196,8 +196,8 @@ LOAD_QUEUE_LEGEND_LABELS = {
 }
 
 CONTEXT_SWITCH_LEGEND_LABELS = {
-    "proc_s": "Processes created/s",
-    "cswch_s": "Context switches/s",
+    "proc_s": "Processes created per second",
+    "cswch_s": "Context switches per second",
 }
 
 

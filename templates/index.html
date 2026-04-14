@@ -117,6 +117,16 @@
         .resource-filter-input::placeholder {
             color: rgba(255,255,255,0.45);
         }
+        .metric-notes {
+            margin-top: 0.5rem;
+            font-size: 0.85rem;
+            color: #000;
+            background: white;
+            padding: 0.5rem;
+            border-radius: 6px;
+            line-height: 1.4;
+            text-align: center;
+        }
         .btn-tiny {
             padding: 0.35rem 0.65rem; font-size: 0.82rem; border-radius: 6px;
             border: 1px solid rgba(255,255,255,0.15);
@@ -831,6 +841,10 @@ syncGraphDependentUI();
 <div class="graph-section">
     <h3>{{ graph_labels.context_switches }}</h3>
     <div class="graph-wrapper">{{ context_switch_graph|safe }}</div>
+    <div class="metric-notes">
+        <span style="color: #1f77b4">proc/s</span>: Processes created per second<br>
+        <span style="color: #ff7f0e">cswch/s</span>: Context switches per second
+    </div>
 </div>
 {% endif %}
 
@@ -845,6 +859,10 @@ syncGraphDependentUI();
 <div class="graph-section">
     <h3>{{ graph_labels.swap_io }}</h3>
     <div class="graph-wrapper">{{ swap_io_graph|safe }}</div>
+    <div class="metric-notes">
+        <span style="color: #1f77b4">pswpin/s</span>: Pages swapped from disk into RAM per second<br>
+        <span style="color: #ff7f0e">pswpout/s</span>: Pages swapped from RAM to disk per second
+    </div>
 </div>
 {% endif %}
 
@@ -873,6 +891,14 @@ syncGraphDependentUI();
 <div class="graph-section">
     <h3>{{ graph_labels.sockets }}</h3>
     <div class="graph-wrapper">{{ sock_graph|safe }}</div>
+    <div class="metric-notes">
+        <span style="color: #1f77b4">totsck</span>: Total Open Sockets<br>
+        <span style="color: #ff7f0e">tcpsck</span>: Active TCP Sockets<br>
+        <span style="color: #2ca02c">udpsck</span>: Active UDP Sockets<br>
+        <span style="color: #d62728">rawsck</span>: Raw IP Sockets<br>
+        <span style="color: #9467bd">ip_frag</span>: IP Fragment Buffers<br>
+        <span style="color: #8c564b">tcp_tw</span>: TCP TIME_WAIT Sockets
+    </div>
 </div>
 {% endif %}
 
