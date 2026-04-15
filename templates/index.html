@@ -144,6 +144,17 @@
             line-height: 1.4;
             text-align: center;
         }
+        .summary-notes {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 12px;
+            white-space: pre-wrap;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+            line-height: 1.5;
+            color: var(--text);
+        }
         .btn-tiny {
             padding: 0.35rem 0.65rem; font-size: 0.82rem; border-radius: 6px;
             border: 1px solid rgba(255,255,255,0.15);
@@ -927,6 +938,13 @@ syncGraphDependentUI();
         <span style="color: #9467bd">ip_frag</span>: IP Fragment Buffers<br>
         <span style="color: #8c564b">tcp_tw</span>: TCP TIME_WAIT Sockets
     </div>
+</div>
+{% endif %}
+
+{% if summary_text %}
+<div class="graph-section">
+    <h3>Summary notes</h3>
+    <div class="summary-notes">{{ summary_text }}</div>
 </div>
 {% endif %}
 
