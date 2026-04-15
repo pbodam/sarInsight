@@ -144,6 +144,17 @@
             line-height: 1.4;
             text-align: center;
         }
+        .summary-notes {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 12px;
+            white-space: pre-wrap;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+            line-height: 1.5;
+            color: var(--text);
+        }
         .btn-tiny {
             padding: 0.35rem 0.65rem; font-size: 0.82rem; border-radius: 6px;
             border: 1px solid rgba(255,255,255,0.15);
@@ -930,6 +941,13 @@ syncGraphDependentUI();
 </div>
 {% endif %}
 
+{% if summary_text %}
+<div class="graph-section">
+    <h3>Summary notes</h3>
+    <div class="summary-notes">{{ summary_text }}</div>
+</div>
+{% endif %}
+
 <script>
 (function() {
     function collectPlotIds() {
@@ -986,32 +1004,35 @@ syncGraphDependentUI();
     }
 
     function finishUpdating() {
-        setTimeout(function() { updating = false; }, 350);
+        setTimeout(function() { updating = false; }, 200);
     }
 
     var updating = false;
+    var resetPatch = { 'xaxis.autorange': true, 'yaxis.autorange': true };
+
+    function relayoutAll(patch, sourceId) {
+        var plotIds = collectPlotIds();
+        plotIds.forEach(function(pid) {
+            if (sourceId && pid === sourceId) return;
+            try {
+                Plotly.relayout(pid, patch);
+            } catch (e) {
+                // ignore charts that cannot be relaied out
+            }
+        });
+    }
+
+    function applyXRangeToAll(range, sourceId) {
+        if (!range || range.length < 2) return;
+        var xPatch = { 'xaxis.range': [range[0], range[1]], 'xaxis.autorange': false };
+        relayoutAll(xPatch, sourceId);
+    }
 
     function syncTimeRange() {
         if (typeof Plotly === 'undefined' || typeof Plotly.relayout !== 'function') return;
 
         var plotIds = collectPlotIds();
         if (plotIds.length < 2) return;
-
-        var resetPatch = { 'xaxis.autorange': true, 'yaxis.autorange': true };
-
-        function relayoutAll(patch) {
-            plotIds.forEach(function(pid) {
-                Plotly.relayout(pid, patch);
-            });
-        }
-
-        function applyXRangeToAll(range) {
-            if (!range || range.length < 2) return;
-            var xPatch = { 'xaxis.range': [range[0], range[1]], 'xaxis.autorange': false };
-            plotIds.forEach(function(pid) {
-                Plotly.relayout(pid, xPatch);
-            });
-        }
 
         plotIds.forEach(function(id) {
             var el = document.getElementById(id);
@@ -1024,7 +1045,7 @@ syncGraphDependentUI();
 
                 if (isAxesReset(data)) {
                     updating = true;
-                    relayoutAll(resetPatch);
+                    relayoutAll(resetPatch, id);
                     finishUpdating();
                     return;
                 }
@@ -1034,7 +1055,7 @@ syncGraphDependentUI();
                 var range = readXRangeFromEventData(data) || getXRangeFromGd(el);
                 if (range) {
                     updating = true;
-                    applyXRangeToAll(range);
+                    applyXRangeToAll(range, id);
                     finishUpdating();
                     return;
                 }
@@ -1043,7 +1064,7 @@ syncGraphDependentUI();
                 requestAnimationFrame(function() {
                     var r2 = getXRangeFromGd(el);
                     if (r2) {
-                        applyXRangeToAll(r2);
+                        applyXRangeToAll(r2, id);
                     }
                     finishUpdating();
                 });
@@ -1052,7 +1073,7 @@ syncGraphDependentUI();
             el.on('plotly_doubleclick', function() {
                 if (updating) return;
                 updating = true;
-                relayoutAll(resetPatch);
+                relayoutAll(resetPatch, id);
                 finishUpdating();
             });
         });
@@ -1060,15 +1081,10 @@ syncGraphDependentUI();
 
     window.addEventListener('load', syncTimeRange);
     document.getElementById('reset_zoom_button')?.addEventListener('click', function() {
-        if (typeof Plotly === 'undefined') return;
-        var plotIds = collectPlotIds();
-        if (!plotIds.length) return;
-        plotIds.forEach(function(pid) {
-            Plotly.relayout(pid, {
-                'xaxis.autorange': true,
-                'yaxis.autorange': true,
-            });
-        });
+        if (typeof Plotly === 'undefined' || updating) return;
+        updating = true;
+        relayoutAll(resetPatch);
+        finishUpdating();
     });
 })();
 </script>

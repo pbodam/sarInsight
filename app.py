@@ -28,6 +28,7 @@ from sar_plot_utils import (
     initial_x_range_from_series,
     pick_anchor_time_series,
 )
+from sar_summary import generate_summary
 
 import plotly.express as px
 import plotly.graph_objects as go
@@ -389,6 +390,7 @@ def index():
     time_from = ""
     time_to = ""
     timezone = "UTC"
+    summary_text = None
     active_sar_name = session.get("sar_display_name")
 
     sa_files = sorted(_get_sa_files())
@@ -853,6 +855,12 @@ def index():
                             )
                             sock_graph = finalize_sar_figure_html(sock_fig, anchor_rng)
 
+                if error_message is None:
+                    try:
+                        summary_text = generate_summary(path, tz)
+                    except Exception:
+                        summary_text = None
+
             except Exception as e:
                 error_message = str(e)
 
@@ -886,6 +894,7 @@ def index():
         disk_filter=disk_filter,
         time_from=time_from,
         time_to=time_to,
+        summary_text=summary_text,
         graph_labels=GRAPH_LABELS,
     )
 
